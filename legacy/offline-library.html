@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fieldnote Offline Library</title>
+  <meta name="theme-color" content="#c94d35">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <style>
+    :root {
+      --ink: #18232c;
+      --muted: #71808a;
+      --paper: #f4f1ea;
+      --panel: #fffefa;
+      --line: #d8ddd9;
+      --accent: #d95d42;
+      --accent-dark: #a94231;
+      --blue: #315968;
+      --blue-dark: #203d4a;
+      --green: #4f7562;
+      --shadow: 0 18px 45px rgba(29, 43, 49, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: linear-gradient(135deg, #f4f1ea 0%, #eef1ed 100%);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    header {
+      padding: 25px clamp(20px, 6vw, 80px) 22px;
+      border-bottom: 1px solid #294955;
+      background: var(--blue-dark);
+      color: #fffefa;
+    }
+
+    .topline, main { max-width: 1120px; margin: auto; }
+    .topline { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+    .eyebrow { margin: 0 0 9px; color: #eaa18e; font: 700 10px/1.2 "Trebuchet MS", sans-serif; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(30px, 5vw, 52px); line-height: .98; font-weight: 400; }
+    .status { color: #d4e2dc; font: 700 12px "Trebuchet MS", sans-serif; white-space: nowrap; }
+    .status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #79b18d; box-shadow: 0 0 0 4px rgba(121, 177, 141, .14); }
+
+    main { padding: 34px 20px 80px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-bottom: 24px; padding: 10px; border: 1px solid var(--line); background: rgba(255, 254, 250, .72); box-shadow: var(--shadow); }
+    .toolbar-label { padding: 0 4px 0 7px; color: var(--blue); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+    input, textarea, button { font: inherit; }
+    input, textarea { border: 1px solid var(--line); border-radius: 3px; background: var(--panel); color: var(--ink); padding: 11px 13px; }
+    #search { flex: 1 1 260px; font-family: "Trebuchet MS", sans-serif; }
+    #sort { border: 1px solid var(--line); border-radius: 3px; background: var(--panel); color: var(--ink); padding: 11px 13px; }
+    button { border: 0; border-radius: 3px; padding: 11px 15px; cursor: pointer; font-family: "Trebuchet MS", sans-serif; font-size: 12px; font-weight: 700; }
+    button.primary { color: white; background: var(--accent); }
+    button.primary:hover { background: var(--accent-dark); }
+    button.quiet { color: var(--blue-dark); background: #dfe7e4; }
+    button.icon { padding: 8px 10px; background: transparent; color: var(--muted); }
+    button.icon:hover { color: var(--accent-dark); }
+
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 342px; gap: 30px; align-items: start; }
+    .library, .reader, .composer { background: rgba(255, 254, 250, .88); border: 1px solid var(--line); box-shadow: var(--shadow); }
+    .library { min-height: 430px; }
+    .section-head { display: flex; justify-content: space-between; align-items: end; padding: 20px 22px 16px; border-bottom: 2px solid var(--ink); }
+    h2, h3 { margin: 0; font-weight: 400; }
+    h2 { font-size: 24px; }
+    h3 { font-size: 25px; }
+    .count { color: var(--muted); font: 12px "Trebuchet MS", sans-serif; }
+    #cards { display: grid; gap: 0; }
+    .card { display: grid; grid-template-columns: 125px minmax(0, 1fr) 90px; gap: 16px; align-items: center; min-height: 112px; padding: 18px 22px; border-bottom: 1px solid var(--line); background: transparent; cursor: pointer; transition: background .15s, padding .15s; }
+    .card:hover { padding-left: 27px; background: #f0f5f2; }
+    .card-tag { color: var(--accent-dark); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+    .card h3 { margin: 0 0 6px; font-size: 22px; }
+    .card p { margin: 0; color: var(--muted); font: 13px/1.45 "Trebuchet MS", sans-serif; }
+    .card-date { display: block; color: var(--muted); font: 11px "Trebuchet MS", sans-serif; text-align: right; }
+    .empty { padding: 45px 25px; color: var(--muted); text-align: center; }
+
+    .side { display: grid; gap: 18px; }
+    .composer { padding: 23px; }
+    .composer h2 { margin-bottom: 5px; }
+    .composer input, .composer textarea, .composer select { width: 100%; margin-bottom: 10px; font-family: Arial, sans-serif; }
+    .composer-intro { margin: 0 0 17px; color: var(--muted); font: 13px/1.45 "Trebuchet MS", sans-serif; }
+    .field-label { display: block; margin: 8px 0 5px; color: var(--muted); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    .composer textarea { min-height: 125px; resize: vertical; }
+    .actions { display: flex; gap: 8px; }
+    .actions button { flex: 1; }
+    .fetch-status { min-height: 18px; margin: 11px 0 0; color: var(--muted); font: 12px/1.4 "Trebuchet MS", sans-serif; }
+    .dropzone { margin-top: 14px; padding: 15px; border: 1px dashed #9fb2ae; border-radius: 3px; color: var(--muted); font: 12px/1.45 "Trebuchet MS", sans-serif; text-align: center; }
+    .dropzone.dragging { border-color: var(--accent); background: #fff2e4; color: var(--accent-dark); }
+    .diagnostic { margin: 0 0 28px; padding: 15px 18px; border-left: 3px solid var(--green); background: #eaf1eb; color: #315443; font: 13px/1.5 Arial, sans-serif; }
+    .diagnostic strong { color: var(--ink); }
+    .hint { margin: 14px 0 0; color: var(--muted); font: 12px/1.45 "Trebuchet MS", sans-serif; }
+
+    .reader { display: none; margin-top: 30px; padding: clamp(25px, 5vw, 58px); }
+    .reader.open { display: block; }
+    .reader-meta { color: var(--accent-dark); font: 700 11px "Trebuchet MS", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+    .reader h2 { margin: 12px 0 22px; font-size: clamp(30px, 5vw, 46px); }
+    .reader-content { max-width: 720px; white-space: pre-wrap; font-size: 18px; line-height: 1.7; }
+    .reader-content.code { padding: 18px; overflow-x: auto; background: #202426; color: #f5f0e7; font: 14px/1.6 Consolas, "Courier New", monospace; white-space: pre; }
+    .page-preview { display: none; width: 100%; min-height: 520px; border: 1px solid var(--line); background: white; }
+    .page-preview.open { display: block; }
+    .reader-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 35px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .reader-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .reader-source { margin-top: 10px; color: var(--muted); font: 12px/1.4 "Trebuchet MS", sans-serif; overflow-wrap: anywhere; }
+    .reader-source a { color: var(--accent-dark); }
+
+    @media (max-width: 760px) {
+      .topline { display: block; }
+      .status { display: block; margin-top: 18px; }
+      .layout { grid-template-columns: 1fr; }
+      .card { grid-template-columns: 1fr 82px; gap: 6px 14px; }
+      .card-tag { grid-column: 1 / -1; }
+      .card h3, .card p { grid-column: 1; }
+      .card-date { grid-column: 2; grid-row: 2 / span 2; }
+      .reader-bar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topline">
+      <div>
+        <p class="eyebrow">Portable archive / no signal required</p>
+        <h1>Fieldnote Library</h1>
+      </div>
+      <div class="status">Local mode</div>
+    </div>
+  </header>
+
+  <main>
+    <p class="diagnostic"><strong>Offline mode:</strong> saved snapshots and imported files work without Wi-Fi. A URL alone is only a bookmark until its page content is fetched or imported while online.</p>
+    <div class="toolbar">
+      <span class="toolbar-label">Find</span>
+      <input id="search" type="search" placeholder="Search your offline library..." aria-label="Search your offline library">
+      <select id="sort" aria-label="Sort saved pages">
+        <option value="recent">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="title">Title A-Z</option>
+        <option value="tag">Category</option>
+      </select>
+      <button id="export" class="quiet">Export library</button>
+      <button id="importButton" class="quiet">Import library</button>
+      <input id="importFile" type="file" accept="application/json" hidden>
+      <button id="importPageButton" class="quiet">Import saved webpage</button>
+      <input id="importPageFile" type="file" accept=".html,.htm,text/html" hidden>
+    </div>
+
+    <div class="layout">
+      <section class="library" aria-label="Saved pages">
+        <div class="section-head">
+          <h2>Saved pages</h2>
+          <span id="count" class="count"></span>
+        </div>
+        <div id="cards"></div>
+      </section>
+
+      <aside class="side">
+        <section class="composer">
+          <h2>Add to your library</h2>
+          <p class="composer-intro">Save a link for later, or fetch its readable text while you are online.</p>
+          <label class="field-label" for="title">Title</label>
+          <input id="title" placeholder="Page title" maxlength="80">
+          <label class="field-label" for="tag">Category</label>
+          <input id="tag" placeholder="Category, e.g. notes" maxlength="30">
+          <label class="field-label" for="url">Source link <span>(optional)</span></label>
+          <input id="url" type="url" placeholder="https://example.com/article" aria-label="Page URL">
+          <label class="field-label" for="contentType">What are you saving?</label>
+          <select id="contentType" aria-label="Content type">
+            <option value="text">Plain text / article</option>
+            <option value="code">Code / source</option>
+          </select>
+          <label class="field-label" for="content">Content <span>(optional when a link is provided)</span></label>
+          <textarea id="content" placeholder="Paste an article, write a note, or save a reference here..."></textarea>
+          <div class="actions">
+            <button id="save" class="primary">Save to library</button>
+            <button id="clear" class="quiet">Clear</button>
+          </div>
+          <div class="actions">
+            <button id="fetch" class="quiet">Fetch link content</button>
+            <button id="openLink" class="quiet">Test link</button>
+          </div>
+          <p id="fetchStatus" class="fetch-status" aria-live="polite"></p>
+          <div id="dropzone" class="dropzone">Drop a saved .html webpage here to archive it</div>
+          <p class="hint">Your pages stay in this browser on this computer. Export them to carry the library elsewhere.</p>
+        </section>
+      </aside>
+    </div>
+
+    <article id="reader" class="reader" aria-live="polite">
+      <div id="readerTag" class="reader-meta"></div>
+      <h2 id="readerTitle"></h2>
+      <div id="readerSource" class="reader-source"></div>
+      <div id="readerContent" class="reader-content"></div>
+      <iframe id="pagePreview" class="page-preview" title="Offline page preview" sandbox></iframe>
+      <div class="reader-bar">
+        <span id="readerDate" class="count"></span>
+        <div class="reader-actions">
+          <button id="fetchSaved" class="quiet">Fetch source</button>
+          <button id="openSaved" class="quiet">Open source</button>
+          <button id="delete" class="icon">Delete page</button>
+        </div>
+      </div>
+    </article>
+  </main>
+
+  <script>
+    const storageKey = "fieldnote-library-v1";
+    const starterPages = [
+      { id: "welcome", title: "Welcome to the quiet web", tag: "start here", content: "This is a small offline library.\n\nSave notes, articles, recipes, references, and other text here while you have a connection. Later, the library remains readable with no signal at all.", created: "2026-09-10" },
+      { id: "packing", title: "A good offline kit", tag: "field notes", content: "Keep a small collection of things you actually return to:\n\n- A map or travel plan\n- A few useful guides\n- Emergency contacts\n- Favorite recipes\n- Reference notes for a project\n\nThe best archive is selective, searchable, and boringly reliable.", created: "2026-09-10" }
+    ];
+
+    let pages = loadPages();
+    let selectedId = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function loadPages() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey));
+        return Array.isArray(saved) && saved.length ? saved : starterPages;
+      } catch (error) {
+        return starterPages;
+      }
+    }
+
+    function savePages() {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(pages));
+      } catch (error) {
+        alert("The browser storage limit was reached. Export the library, then remove some large pages.");
+      }
+    }
+
+    function render() {
+      const query = $("search").value.trim().toLowerCase();
+      const visible = pages.filter((page) => (page.title + " " + page.tag + " " + page.content).toLowerCase().includes(query));
+      visible.sort((first, second) => {
+        const sort = $("sort").value;
+        if (sort === "title") return first.title.localeCompare(second.title);
+        if (sort === "tag") return (first.tag || "").localeCompare(second.tag || "");
+        if (sort === "oldest") return first.created.localeCompare(second.created);
+        return second.created.localeCompare(first.created);
+      });
+      $("count").textContent = visible.length + " of " + pages.length;
+      $("cards").innerHTML = visible.length ? visible.map((page) => `
+        <div class="card" data-id="${escapeHtml(page.id)}">
+          <span class="card-tag">${escapeHtml(page.tag || "saved page")}</span>
+          <h3>${escapeHtml(page.title)}</h3>
+          <p>${escapeHtml(page.content.slice(0, 105))}${page.content.length > 105 ? "..." : ""}</p>
+          <span class="card-date">${escapeHtml(page.created)}</span>
+        </div>`).join("") : '<div class="empty">Nothing in the library matches that search.</div>';
+
+      document.querySelectorAll(".card").forEach((card) => card.addEventListener("click", () => openPage(card.dataset.id)));
+      if (selectedId && pages.some((page) => page.id === selectedId)) openPage(selectedId, false);
+    }
+
+    function openPage(id, scroll = true) {
+      const page = pages.find((item) => item.id === id);
+      if (!page) return;
+      selectedId = id;
+      $("readerTag").textContent = page.tag || "saved page";
+      $("readerTitle").textContent = page.title;
+      const readerContent = $("readerContent");
+      const pagePreview = $("pagePreview");
+      readerContent.classList.toggle("code", page.contentType === "code");
+      readerContent.textContent = page.content + (page.url ? "\n\nSource: " + page.url : "");
+      readerContent.style.display = page.htmlContent ? "none" : "block";
+      pagePreview.classList.toggle("open", Boolean(page.htmlContent));
+      pagePreview.srcdoc = page.htmlContent || "";
+      $("readerSource").innerHTML = page.url ? "Source link: <a href=\"" + escapeHtml(page.url) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + escapeHtml(page.url) + "</a>" : "Saved locally without a source link.";
+      $("readerDate").textContent = "Saved " + page.created;
+      $("fetchSaved").style.display = page.url ? "inline-block" : "none";
+      $("openSaved").style.display = page.url ? "inline-block" : "none";
+      $("reader").classList.add("open");
+      if (scroll) $("reader").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
+    }
+
+    function getUrl() {
+      const value = $("url").value.trim();
+      if (!value) return "";
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Unsupported protocol");
+        return parsed.href;
+      } catch (error) {
+        throw new Error("Enter a complete http:// or https:// link.");
+      }
+    }
+
+    function addPage(title, tag, content, url) {
+      const page = { id: "page-" + Date.now(), title, tag: tag || "saved page", content, url: url || "", contentType: $("contentType").value, created: new Date().toISOString().slice(0, 10) };
+      pages.unshift(page);
+      savePages();
+      render();
+      openPage(page.id);
+      return page;
+    }
+
+    function makeOfflineSnapshot(documentCopy) {
+      documentCopy.querySelectorAll("script, noscript, iframe, object, embed, form, input, button").forEach((element) => element.remove());
+      documentCopy.querySelectorAll("a").forEach((link) => {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+      });
+      const styles = Array.from(documentCopy.querySelectorAll("style")).map((style) => style.outerHTML).join("\n");
+      const body = documentCopy.body ? documentCopy.body.innerHTML : "";
+      return "<!doctype html><html><head><meta charset=\"utf-8\"><style>body{margin:24px;font-family:system-ui,Arial,sans-serif;line-height:1.6;color:#202426}img{max-width:100%;height:auto}pre{overflow:auto;padding:12px;background:#eee}</style>" + styles + "</head><body>" + body + "</body></html>";
+    }
+
+    function readPageContent(documentCopy) {
+      documentCopy.querySelectorAll("script, style, noscript, nav, footer, header").forEach((element) => element.remove());
+      return (documentCopy.body ? documentCopy.body.innerText : "").replace(/\n{3,}/g, "\n\n").trim();
+    }
+
+    async function fetchSnapshot(url) {
+      try {
+        const localResponse = await fetch("/api/fetch?url=" + encodeURIComponent(url));
+        if (localResponse.ok) {
+          const localResult = await localResponse.json();
+          if (localResult.snapshot) return localResult;
+        }
+      } catch (error) {
+        // The app can still use the browser fetch when the companion service is not running.
+      }
+
+      const response = await fetch(url, { mode: "cors" });
+      if (!response.ok) throw new Error("The site returned " + response.status + ".");
+      const html = await response.text();
+      const documentCopy = new DOMParser().parseFromString(html, "text/html");
+      const snapshot = makeOfflineSnapshot(documentCopy);
+      const contentDocument = new DOMParser().parseFromString(snapshot, "text/html");
+      return {
+        title: documentCopy.title || url,
+        snapshot,
+        content: readPageContent(contentDocument)
+      };
+    }
+
+    function importHtmlFile(file) {
+      if (!file || !/\.html?$/i.test(file.name)) {
+        alert("Choose a saved .html or .htm webpage.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const documentCopy = new DOMParser().parseFromString(reader.result, "text/html");
+        const snapshot = makeOfflineSnapshot(documentCopy);
+        const contentDocument = new DOMParser().parseFromString(snapshot, "text/html");
+        const content = readPageContent(contentDocument);
+        if (!content) {
+          alert("That webpage did not contain readable content.");
+          return;
+        }
+        const importedPage = addPage(documentCopy.title || file.name, "imported webpage", content, "");
+        importedPage.htmlContent = snapshot;
+        savePages();
+        render();
+        openPage(importedPage.id, false);
+      };
+      reader.readAsText(file);
+    }
+
+    $("search").addEventListener("input", render);
+    $("sort").addEventListener("change", render);
+    $("save").addEventListener("click", () => {
+      const title = $("title").value.trim();
+      const content = $("content").value.trim();
+      let url;
+      try {
+        url = getUrl();
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
+      if (!title || (!content && !url)) {
+        alert("Add a title and some content or a link first.");
+        return;
+      }
+      addPage(title, $("tag").value.trim(), content || "Saved link. Fetch the source when you are online.", url);
+      $("title").value = "";
+      $("tag").value = "";
+      $("url").value = "";
+      $("contentType").value = "text";
+      $("content").value = "";
+    });
+
+    $("clear").addEventListener("click", () => {
+      $("title").value = "";
+      $("tag").value = "";
+      $("url").value = "";
+      $("contentType").value = "text";
+      $("content").value = "";
+      $("fetchStatus").textContent = "";
+    });
+
+    $("openLink").addEventListener("click", () => {
+      try {
+        const url = getUrl();
+        if (!url) throw new Error("Add a link first.");
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    $("fetch").addEventListener("click", async () => {
+      let url;
+      try {
+        url = getUrl();
+        if (!url) throw new Error("Add a link first.");
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
+
+      $("fetchStatus").textContent = "Trying to fetch the page...";
+      try {
+        const result = await fetchSnapshot(url);
+        const content = result.content || readPageContent(new DOMParser().parseFromString(result.snapshot, "text/html"));
+        if (!content) throw new Error("The page did not contain readable text.");
+        const title = $("title").value.trim() || result.title || url;
+        const fetchedPage = addPage(title, $("tag").value.trim() || "offline snapshot", content, url);
+        fetchedPage.htmlContent = result.snapshot;
+        fetchedPage.contentType = "text";
+        savePages();
+        $("title").value = "";
+        $("tag").value = "";
+        $("url").value = "";
+        $("contentType").value = "text";
+        $("content").value = "";
+        $("fetchStatus").textContent = "Fetched through the local archive service and saved locally.";
+      } catch (error) {
+        $("fetchStatus").textContent = "Fetch blocked by this site or browser. Use Save locally to keep the link, or paste the page text.";
+      }
+    });
+
+    $("openSaved").addEventListener("click", () => {
+      const page = pages.find((item) => item.id === selectedId);
+      if (page && page.url) window.open(page.url, "_blank", "noopener,noreferrer");
+    });
+
+    $("fetchSaved").addEventListener("click", async () => {
+      const page = pages.find((item) => item.id === selectedId);
+      if (!page || !page.url) return;
+      $("fetchSaved").textContent = "Fetching...";
+      try {
+        const result = await fetchSnapshot(page.url);
+        const content = result.content || readPageContent(new DOMParser().parseFromString(result.snapshot, "text/html"));
+        if (!content) throw new Error("No readable content");
+        page.content = content;
+        page.htmlContent = result.snapshot;
+        page.contentType = "text";
+        page.title = page.title.indexOf("http") === 0 ? result.title || page.title : page.title;
+        savePages();
+        render();
+        openPage(page.id, false);
+      } catch (error) {
+        alert("This site blocked browser fetching. Save or paste its content instead.");
+      } finally {
+        $("fetchSaved").textContent = "Fetch source";
+      }
+    });
+
+    $("delete").addEventListener("click", () => {
+      if (!selectedId || !confirm("Delete this saved page?")) return;
+      pages = pages.filter((page) => page.id !== selectedId);
+      selectedId = null;
+      $("reader").classList.remove("open");
+      savePages();
+      render();
+    });
+
+    $("export").addEventListener("click", () => {
+      const blob = new Blob([JSON.stringify(pages, null, 2)], { type: "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "fieldnote-library.json";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+
+    $("importButton").addEventListener("click", () => $("importFile").click());
+    $("importFile").addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const incoming = JSON.parse(reader.result);
+          if (!Array.isArray(incoming)) throw new Error("Invalid library");
+          pages = incoming.filter((page) => page.title && page.content).map((page) => ({ ...page, id: page.id || "page-" + Date.now() }));
+          savePages();
+          render();
+          alert("Library imported.");
+        } catch (error) {
+          alert("That file is not a valid Fieldnote library.");
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = "";
+    });
+
+    $("importPageButton").addEventListener("click", () => $("importPageFile").click());
+    $("importPageFile").addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      importHtmlFile(file);
+      event.target.value = "";
+    });
+
+    $("dropzone").addEventListener("dragover", (event) => {
+      event.preventDefault();
+      $("dropzone").classList.add("dragging");
+    });
+    $("dropzone").addEventListener("dragleave", () => $("dropzone").classList.remove("dragging"));
+    $("dropzone").addEventListener("drop", (event) => {
+      event.preventDefault();
+      $("dropzone").classList.remove("dragging");
+      importHtmlFile(event.dataTransfer.files[0]);
+    });
+
+    render();
+    if ("serviceWorker" in navigator && location.protocol !== "file:") {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173d48">
+  <meta name="description" content="A local-first web library for saved pages and offline reading.">
+  <link rel="manifest" href="manifest.webmanifest?v=5">
+  <link rel="stylesheet" href="styles.css?v=5">
+  <title>Quietweb Library</title>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#library" aria-label="Quietweb home">
+      <span class="brand-mark">Q</span>
+      <span><strong>quietweb</strong><small>web build 0.3 · your local reading room</small></span>
+    </a>
+    <div class="header-actions">
+      <span id="connectionState" class="connection"><i></i> Checking server...</span>
+      <label class="theme-picker"><span>Theme</span><select id="themeSelect" aria-label="Choose theme"><option value="dark">Dark</option><option value="light">Light</option><option value="teto">Teto SV</option></select></label>
+      <button class="button header-button" data-view="diagnostics">Diagnostics</button>
+      <button id="installButton" class="button subtle" hidden>Install app</button>
+    </div>
+  </header>
+  <div id="announcementBanner" class="announcement" hidden></div>
+  <div id="serverNotice" class="server-notice" hidden>Quietweb server not found. Local pages still work, but fetch, uptime, and broadcasts are unavailable.</div>
+
+  <main>
+    <section id="libraryView" class="view active" aria-labelledby="libraryHeading">
+      <div class="view-intro">
+        <div>
+          <p class="kicker">Personal archive</p>
+          <h1 id="libraryHeading">A quieter way to keep the web.</h1>
+          <p class="lede">Save pages while connected. Read your collection when the signal is gone.</p>
+        </div>
+        <button class="button accent" data-view="add">+ Add something</button>
+      </div>
+
+      <div class="control-bar">
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" placeholder="Search titles, tags, and content" autocomplete="off"></label>
+        <label class="select-box"><span>Sort</span><select id="sortSelect"><option value="recent">Recently added</option><option value="oldest">Oldest first</option><option value="title">Title A-Z</option><option value="size">Largest archive</option></select></label>
+        <button id="filterButton" class="button subtle" aria-expanded="false">Filter <span id="filterCount"></span></button>
+        <button id="exportButton" class="button subtle">Export</button>
+        <button id="importButton" class="button subtle">Import</button>
+        <input id="libraryFileInput" type="file" accept="application/json" hidden>
+      </div>
+      <div id="filterPanel" class="filter-panel" hidden>
+        <button class="filter-chip active" data-filter="all">All pages</button>
+        <button class="filter-chip" data-filter="snapshot">Offline snapshots</button>
+        <button class="filter-chip" data-filter="bookmark">Bookmarks</button>
+        <button class="filter-chip" data-filter="note">Notes</button>
+        <button class="filter-chip" data-filter="code">Code</button>
+      </div>
+
+      <div class="library-heading"><h2>Your pages</h2><span id="resultCount" class="muted"></span></div>
+      <div id="pageList" class="page-list" aria-live="polite"></div>
+    </section>
+
+    <section id="addView" class="view" aria-labelledby="addHeading">
+      <div class="view-intro compact"><div><p class="kicker">New entry</p><h1 id="addHeading">Put something aside.</h1><p class="lede">Archive a readable page, save a bookmark, or write a note for later.</p></div><button class="button subtle" data-view="library">Back to library</button></div>
+      <form id="entryForm" class="entry-layout">
+        <div class="entry-main panel">
+          <label>Title<input id="titleInput" maxlength="120" placeholder="What are you saving?"></label>
+          <div class="two-up"><label>Tag<input id="tagInput" maxlength="40" placeholder="article, reference, project..."></label><label>Type<select id="typeInput"><option value="snapshot">Web snapshot</option><option value="bookmark">Bookmark only</option><option value="note">Note</option><option value="code">Code</option></select></label></div>
+          <label>Source URL <span class="label-note">optional</span><input id="urlInput" type="url" placeholder="https://example.com/article"></label>
+          <label>Content <span class="label-note">optional when fetching a URL</span><textarea id="contentInput" rows="14" placeholder="Paste text or code here..."></textarea></label>
+          <div class="entry-actions"><button type="submit" class="button accent">Save to library</button><button type="button" id="fetchButton" class="button subtle">Fetch URL content</button><button type="button" id="clearFormButton" class="button text-button">Clear</button></div>
+          <p id="entryStatus" class="form-status" role="status"></p>
+        </div>
+        <aside class="entry-aside"><div class="tip"><span class="tip-icon">↳</span><h2>How it works</h2><p>A snapshot stores sanitized page HTML locally. It is the version you can read later without a connection.</p></div><label class="dropzone" id="dropzone"><input id="fileInput" type="file" accept=".html,.htm,.txt,.md,.json" hidden><strong>Drop a file here</strong><span>HTML, text, Markdown, or an exported library</span></label></aside>
+      </form>
+    </section>
+
+    <section id="readerView" class="view" aria-labelledby="readerTitle">
+      <div class="reader-top"><button class="back-link" data-view="library">← Library</button><div id="readerActions" class="reader-actions"></div></div>
+      <div class="reader-heading"><p id="readerTag" class="kicker"></p><h1 id="readerTitle"></h1><p id="readerMeta" class="muted"></p></div>
+      <div id="readerBody" class="reader-body"></div>
+    </section>
+
+    <section id="diagnosticsView" class="view" aria-labelledby="diagnosticsHeading">
+      <div class="view-intro compact"><div><p class="kicker">System check</p><h1 id="diagnosticsHeading">Is the room ready?</h1><p class="lede">Quick checks for storage, offline support, and the browser features Quietweb uses.</p></div><button class="button subtle" data-view="library">Back to library</button></div>
+      <div class="diagnostic-toolbar"><button id="runTestsButton" class="button accent">Run checks</button><span id="diagnosticSummary" class="muted">Not run yet</span></div>
+      <div id="testResults" class="test-results"></div>
+      <section class="admin-panel panel">
+        <div class="admin-heading"><div><p class="kicker">Owner controls</p><h2>Server room</h2></div><span id="serverBadge" class="server-badge">Browser-only mode</span></div>
+        <div class="server-stats"><div><span>Uptime</span><strong id="serverUptime">--</strong></div><div><span>Runtime</span><strong id="serverRuntime">--</strong></div><div><span>Server</span><strong id="serverAddress">--</strong></div></div>
+        <form id="adminForm" class="admin-form"><label>Admin token<input id="adminToken" type="password" autocomplete="off" placeholder="Shown by the server when it starts"></label><label>Announcement<input id="announcementInput" maxlength="240" placeholder="Message for connected viewers"></label><button id="broadcastButton" class="button accent" type="submit" disabled>Broadcast message</button></form>
+        <p id="adminStatus" class="form-status" role="status"></p>
+      </section>
+    </section>
+    <section class="console" aria-label="Quietweb activity console">
+      <div class="console-head"><strong>Activity console</strong><span id="consoleMode">live app readout · safe commands only</span></div>
+      <pre id="consoleOutput">Quietweb activity console ready.</pre>
+      <form id="consoleForm" class="console-form"><span>›</span><input id="consoleInput" autocomplete="off" placeholder="help, status, clear, theme"><button class="button subtle" type="submit">Run</button></form>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js?v=5" type="module"></script>
+</body>
+</html>

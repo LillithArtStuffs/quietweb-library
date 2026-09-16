@@ -258,6 +258,19 @@ def run():
             request(base, "/api/admin/announcement", "POST", {"message": "nope"}, expect=403)
             return "rejected anonymous broadcast"
 
+        @check("the a-Shell launcher runs the server without a subprocess")
+        def _():
+            raw = (ROOT / "scripts" / "start-ashell.sh").read_text(encoding="utf-8")
+            # Judge what the script runs, not what it says about itself: the
+            # comment explaining this rule names start.py too.
+            script = "\n".join(line for line in raw.split("\n") if not line.lstrip().startswith("#"))
+            # iOS has no fork(), so a server started as a child does not
+            # reliably receive Ctrl+C and keeps holding the port.
+            assert "start.py" not in script, "the a-Shell launcher still goes through start.py"
+            assert "server/offline_server.py" in script, "it does not start the server directly"
+            assert "exec " in script, "it does not exec, so the shell stays between Ctrl+C and the server"
+            return "starts the server directly and execs into it"
+
         @check("literal addresses are judged without asking the resolver")
         def _():
             import socket as socket_module

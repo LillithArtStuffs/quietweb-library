@@ -31,6 +31,8 @@ cd quietweb-library/scripts
 sh start-ashell.sh
 ```
 
+To stop it, press Ctrl+C — in a-Shell that is the `^` key on the bar above the keyboard, then `c`. It prints `Stopping Quietweb.` when it has shut down.
+
 The terminal prints the iPhone's LAN URL. Keep a-Shell running, connect the other device to the same Wi-Fi, and open that URL in its browser. The iPhone hosts the app; the other device views it.
 
 The viewing device must use the printed `http://192.168.x.x:8765/` address, not `127.0.0.1`. Both devices must be on the same Wi-Fi, and the host firewall must allow Python on private networks. Do not expose this server to the public internet. The in-app console is limited to Quietweb commands and never executes shell commands.

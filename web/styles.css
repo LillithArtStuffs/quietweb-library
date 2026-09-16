@@ -158,6 +158,59 @@ html[data-theme="teto"] {
   --syn-function: #e3e3e3;
   --syn-punct: #8d8288;
 }
+/* The same five swatches at night: black ground, silver text, crimson accent,
+   gold trim. Her boots, hem and collar are the black end of the sheet. */
+html[data-theme="teto-dark"] {
+  --ink: #e3e3e3;
+  --muted: #8d8288;
+  --paper: #0d0b0c;
+  --panel: #171416;
+  --line: #2e282b;
+  --line-strong: #4a4247;
+  --shadow: 0 18px 55px rgba(0, 0, 0, .5);
+  --glow: #2a1016;
+  --blue: #0a0809;
+  --blue-soft: #241c20;
+  --on-brand: #e3e3e3;
+  --on-brand-dim: #bcb6ba;
+  --on-brand-line: #a8905f;
+  --coral: #b8344c;
+  --coral-dark: #e0566f;
+  --green: #bba071;
+  --on-accent: #ffffff;
+  --on-surface: #e3e3e3;
+  --surface: rgba(23, 20, 22, .9);
+  --row: rgba(23, 20, 22, .7);
+  --row-hover: #201b1e;
+  --dashed: #3a3237;
+  --drop-hover: #241c20;
+  --status-ok: #6bbd89;
+  --status-warn: #bba071;
+  --status-bad: #e0566f;
+  --status-idle: #6b6165;
+  --badge-bg: #14231a;
+  --badge-line: #3d6b4f;
+  --notice-bg: #3a2e14;
+  --notice-ink: #f0e2c4;
+  --notice-line: #bba071;
+  --toast-bg: #1c181a;
+  --toast-line: #3a3237;
+  --toast-ink: #e3e3e3;
+  --console-bg: #080607;
+  --console-line: #2a2427;
+  --console-ink: #e3e3e3;
+  --console-dim: #8d8288;
+  --console-accent: #e0566f;
+  --code-bg: #080607;
+  --code-ink: #e3e3e3;
+  --syn-comment: #8d8288;
+  --syn-string: #bba071;
+  --syn-number: #dcb98a;
+  --syn-keyword: #e0566f;
+  --syn-builtin: #c9a8b2;
+  --syn-function: #e3e3e3;
+  --syn-punct: #8d8288;
+}
 html[data-theme="wire"] {
   --ink: #d3f7e4;
   --muted: #6f8b83;

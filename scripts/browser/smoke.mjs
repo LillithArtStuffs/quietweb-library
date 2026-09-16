@@ -315,35 +315,52 @@ async function main() {
       return "rendered as text in spans only";
     });
 
-    await check("highlighting follows the theme", async () => {
-      // Sample a page that is known to contain all three token kinds.
+    await check("syntax colours follow the theme and stay legible", async () => {
+      // Sample a page known to contain all the token kinds.
       await goToLibrary(page);
       await page.click('.page-row:has(h3:text-is("Smoke js"))');
       await page.waitForSelector("#readerBody .syn-comment");
-      const colours = {};
-      for (const theme of ["light", "dark", "teto", "wire"]) {
+      const palettes = new Set();
+      const problems = [];
+      for (const theme of ["light", "dark", "teto", "teto-dark", "wire"]) {
         await page.selectOption("#themeSelect", theme);
         await settleTransitions(page);
-        colours[theme] = await page.evaluate(() => {
-          const pick = (name) => {
+        const found = await page.evaluate(() => {
+          const parse = (v) => (v.match(/[\d.]+/g) || []).map(Number);
+          const channel = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+          const lum = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+          const back = parse(getComputedStyle(document.querySelector("#readerBody")).backgroundColor);
+          const tokens = {};
+          for (const name of ["comment", "string", "number", "keyword", "builtin", "function", "punct"]) {
             const node = document.querySelector(`#readerBody .syn-${name}`);
-            return node ? getComputedStyle(node).color : "missing";
-          };
-          return [pick("string"), pick("comment"), pick("punct")].join(" | ");
+            if (!node) continue;
+            const front = parse(getComputedStyle(node).color);
+            const [hi, lo] = [lum(front), lum(back)].sort((a, b) => b - a);
+            tokens[name] = { colour: getComputedStyle(node).color, ratio: (hi + 0.05) / (lo + 0.05) };
+          }
+          return { back: getComputedStyle(document.querySelector("#readerBody")).backgroundColor, tokens };
+        });
+        const names = Object.keys(found.tokens);
+        if (names.length < 5) throw new Error(`${theme} painted only ${names.length} token kinds`);
+        palettes.add(names.map((n) => found.tokens[n].colour).join("|"));
+        // Every token must be readable on that theme's own code surface.
+        names.forEach((name) => {
+          if (found.tokens[name].ratio < 3) {
+            problems.push(`${theme} .syn-${name} ${found.tokens[name].ratio.toFixed(2)}:1 on ${found.back}`);
+          }
         });
       }
-      if (Object.values(colours).some((value) => value.includes("missing"))) {
-        throw new Error("no highlighted tokens on screen to sample");
-      }
-      const distinct = new Set(Object.values(colours));
-      if (distinct.size !== 4) throw new Error(`only ${distinct.size} distinct syntax palettes`);
-      return "4 distinct syntax palettes";
+      if (problems.length) throw new Error(problems.join(", "));
+      // Themes may share a syntax palette when they share a code surface, but
+      // they must not all be the same, which would mean syntax ignores themes.
+      if (palettes.size < 2) throw new Error("every theme paints syntax identically");
+      return `${palettes.size} syntax palettes, all tokens above 3:1`;
     });
 
     await check("every theme repaints every surface", async () => {
       await goToLibrary(page);
       const signatures = {};
-      for (const theme of ["light", "dark", "teto", "wire"]) {
+      for (const theme of ["light", "dark", "teto", "teto-dark", "wire"]) {
         await page.selectOption("#themeSelect", theme);
         await settleTransitions(page);
         signatures[theme] = await page.evaluate(() => {
@@ -372,7 +389,7 @@ async function main() {
 
     await check("no theme makes text unreadable", async () => {
       const problems = [];
-      for (const theme of ["light", "dark", "teto", "wire"]) {
+      for (const theme of ["light", "dark", "teto", "teto-dark", "wire"]) {
         await page.selectOption("#themeSelect", theme);
         await settleTransitions(page);
         const found = await page.evaluate(() => {

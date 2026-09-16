@@ -47,9 +47,9 @@ The host server owns the shared library at `server_data/library.json`. Enter the
 
 ## Themes
 
-Four themes ship: **Light**, **Dark**, **Teto SV**, and **Nightwire**. Teto SV is built from the five swatches on the official TWINDRILL concept sheet — white `#e3e3e3`, crimson `#b8344c`, silver `#bcb6ba`, gold `#bba071`, black — sampled with the palette tool below rather than eyeballed. **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
+Five themes ship: **Light**, **Dark**, **Teto SV Light**, **Teto SV Dark**, and **Nightwire**. The two Teto themes are built from the same five swatches on the official TWINDRILL concept sheet — white `#e3e3e3`, crimson `#b8344c`, silver `#bcb6ba`, gold `#bba071`, black — sampled with the palette tool below rather than eyeballed. The light one follows her uniform (silver over white, crimson panels, gold trim); the dark one inverts to the black end of the same palette, with silver text and the same crimson and gold. **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
 
-Every colour the app paints comes from a custom property — 49 tokens, including a full syntax palette. A theme is one block of tokens in `web/styles.css` and nothing else; there are no per-theme rules anywhere in the stylesheet.
+Every colour the app paints comes from a custom property — 49 tokens, including a full syntax palette. Theme names may be hyphenated. A theme is one block of tokens in `web/styles.css` and nothing else; there are no per-theme rules anywhere in the stylesheet.
 
 ### The theme editor
 

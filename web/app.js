@@ -4,9 +4,18 @@ const STORE = "pages";
 const BUILD = "0.4";
 const TOMBSTONE_KEY = "quietweb-tombstones";
 const VIEWS = ["library", "add", "reader", "diagnostics", "themes"];
-const THEMES = ["dark", "light", "teto", "wire"];
+const THEMES = ["dark", "light", "teto", "teto-dark", "wire"];
 const THEME_OPTIONS = [...THEMES, "system"];
-const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#1a1416", wire: "#0a1114" };
+// One place that names a theme, so the picker and the editor cannot drift.
+const THEME_LABELS = {
+  system: "System",
+  dark: "Dark",
+  light: "Light",
+  teto: "Teto SV Light",
+  "teto-dark": "Teto SV Dark",
+  wire: "Nightwire"
+};
+const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#1a1416", "teto-dark": "#0a0809", wire: "#0a1114" };
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 const state = {
@@ -510,18 +519,27 @@ function importThemeFile(file) {
   reader.readAsText(file);
 }
 
+const themeOption = (value) => `<option value="${escapeHtml(value)}">${escapeHtml(THEME_LABELS[value] || value)}</option>`;
+
 function refreshThemePicker() {
   const select = $("themeSelect");
   const current = select.value;
   const custom = readCustomThemes();
-  const builtIn = [["system", "System"], ["dark", "Dark"], ["light", "Light"], ["teto", "Teto SV"], ["wire", "Nightwire"]];
-  select.innerHTML = builtIn.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")
+  select.innerHTML = ["system", ...THEMES].map(themeOption).join("")
     + (Object.keys(custom).length
       ? `<optgroup label="Yours">${Object.keys(custom).sort().map((name) =>
           `<option value="${escapeHtml(CUSTOM_PREFIX + name)}">${escapeHtml(name)}</option>`).join("")}</optgroup>`
       : "");
   select.value = current;
   if (!select.value) select.value = localStorage.getItem("quietweb-theme") || "dark";
+
+  // The editor's "start from" list is the same set, minus "system".
+  const bases = $("themeBase");
+  if (bases) {
+    const chosen = bases.value;
+    bases.innerHTML = THEMES.map(themeOption).join("");
+    bases.value = chosen || draft.base || "dark";
+  }
 }
 
 /* ---------------------------------------------------- syntax highlighting */

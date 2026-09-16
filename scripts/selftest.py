@@ -127,7 +127,7 @@ def run():
         @check("every theme defines every colour token")
         def _():
             css = (WEB / "styles.css").read_text(encoding="utf-8")
-            blocks = re.findall(r'(?:^:root|html\[data-theme="([a-z]+)"\]) \{(.*?)\}', css, re.S | re.M)
+            blocks = re.findall(r'(?:^:root|html\[data-theme="([a-z][a-z0-9-]*)"\]) \{(.*?)\}', css, re.S | re.M)
             assert len(blocks) >= 2, "no theme blocks found"
             named = [(name or "light", set(re.findall(r"--([a-z-]+)\s*:", body))) for name, body in blocks]
             reference = set().union(*(tokens for _, tokens in named))
@@ -156,14 +156,20 @@ def run():
             css = (WEB / "styles.css").read_text(encoding="utf-8")
             app = (WEB / "app.js").read_text(encoding="utf-8")
             html = (WEB / "index.html").read_text(encoding="utf-8")
-            declared = set(re.findall(r'html\[data-theme="([a-z]+)"\]\s*\{', css)) | {"light"}
+            declared = set(re.findall(r'html\[data-theme="([a-z][a-z0-9-]*)"\]\s*\{', css)) | {"light"}
             listed = set(re.findall(r'const THEMES = \[([^\]]+)\]', app)[0].replace('"', "").replace(" ", "").split(","))
             picker = re.search(r'<select id="themeSelect".*?</select>', html, re.S).group(0)
-            offered = set(re.findall(r'<option value="([a-z]+)"', picker)) - {"system"}
+            offered = set(re.findall(r'<option value="([a-z][a-z0-9-]*)"', picker)) - {"system"}
             assert listed <= declared, f"app.js offers themes with no CSS: {sorted(listed - declared)}"
             assert offered == listed, f"the picker and app.js disagree: {sorted(offered ^ listed)}"
-            colours = set(re.findall(r'(\w+): "#', re.search(r'const THEME_COLORS = \{([^}]+)\}', app).group(1)))
+            colours = set(re.findall(r'"?([a-z][a-z0-9-]*)"?: "#', re.search(r'const THEME_COLORS = \{([^}]+)\}', app).group(1)))
             assert colours == listed, f"THEME_COLORS is missing {sorted(listed - colours)}"
+            labels = set(re.findall(r'"?([a-z][a-z0-9-]*)"?:\s*"', re.search(r"const THEME_LABELS = \{(.*?)\n\};", app, re.S).group(1)))
+            assert listed <= labels, f"THEME_LABELS is missing {sorted(listed - labels)}"
+            # The editor's base list has to offer every theme too.
+            bases = re.search(r'<select id="themeBase">.*?</select>', html, re.S).group(0)
+            offered_bases = set(re.findall(r'<option value="([a-z][a-z0-9-]*)"', bases))
+            assert offered_bases == listed, f"the editor's base list disagrees: {sorted(offered_bases ^ listed)}"
             return f"{len(listed)} themes: {', '.join(sorted(listed))}"
 
         @check("every highlight class the app emits has a style")

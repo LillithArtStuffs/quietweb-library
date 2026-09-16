@@ -33,6 +33,11 @@ PORT_ATTEMPTS = 8
 MAX_BYTES = 8 * 1024 * 1024
 MAX_BODY_BYTES = 64 * 1024 * 1024
 MAX_PAGES = 10000
+MIN_SECRET = 12
+# The ranges a device on the same Wi-Fi can actually reach. Deliberately not
+# ipaddress.is_private, which is true of assignments like 192.0.0.0/29 that no
+# one can route to.
+LAN_NETWORKS = tuple(ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 BLOCKED_TAGS = {"script", "noscript", "iframe", "object", "embed", "form", "input", "button"}
 ALLOWED_ATTRIBUTES = {"alt", "class", "href", "src", "title", "width", "height"}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -455,15 +460,30 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def local_ip():
-    """Best guess at the address another device on the same Wi-Fi should use."""
+    """The address another device on the same Wi-Fi could use, if there is one.
+
+    On cellular the probe still answers, with something like 192.0.0.2 that no
+    other device can reach. Printing that as a LAN URL is worse than printing
+    nothing, so an address outside the real LAN ranges is reported as absent.
+    """
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         probe.connect(("192.0.2.1", 80))  # TEST-NET-1: routed nowhere, sends nothing.
         address = probe.getsockname()[0]
         probe.close()
-        return address
-    except OSError:
+        found = ipaddress.ip_address(address)
+    except (OSError, ValueError):
         return None
+    return address if any(found in network for network in LAN_NETWORKS) else None
+
+
+class Server(ThreadingHTTPServer):
+    """A server that does not shout when a reader walks away mid-response."""
+
+    def handle_error(self, request, client_address):
+        if issubclass(sys.exc_info()[0], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return  # The tab was closed or the app was backgrounded. Normal.
+        super().handle_error(request, client_address)
 
 
 def serve(host, port):
@@ -472,7 +492,7 @@ def serve(host, port):
     last_error = None
     for offset in range(PORT_ATTEMPTS):
         try:
-            return ThreadingHTTPServer((host, port + offset), handler)
+            return Server((host, port + offset), handler)
         except OSError as error:
             last_error = error
     raise SystemExit(f"Could not bind {host}:{port}-{port + PORT_ATTEMPTS - 1}. Last error: {last_error}")
@@ -491,9 +511,14 @@ def main():
     arguments = parser.parse_args()
 
     if arguments.admin_token:
-        if len(arguments.admin_token) < 12:
-            raise SystemExit("--admin-token must be at least 12 characters.")
+        if len(arguments.admin_token) < MIN_SECRET:
+            raise SystemExit(f"--admin-token must be at least {MIN_SECRET} characters.")
         ADMIN_TOKEN = arguments.admin_token
+    if arguments.proxy_passphrase and len(arguments.proxy_passphrase) < MIN_SECRET:
+        raise SystemExit(
+            f"--proxy-passphrase must be at least {MIN_SECRET} characters. It is the only thing "
+            "between the proxy and anyone who can reach this server; use --no-proxy-auth if you "
+            "genuinely want it open.")
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
     KEEP_SCRIPTS = not arguments.strip_scripts
     GATE = gatekeeper.Gate(passphrase=arguments.proxy_passphrase or None,
@@ -509,9 +534,10 @@ def main():
         address = local_ip()
         if address:
             print(f"For another device on the same Wi-Fi, try: http://{address}:{port}/")
+            print("LAN mode is enabled. Use this only on a trusted private network.")
         else:
-            print(f"Find this device's Wi-Fi IP, then open http://<ip>:{port}/ on the other device.")
-        print("LAN mode is enabled. Use this only on a trusted private network.")
+            print("No Wi-Fi address found, so no other device can reach this server right now.")
+            print("Join a Wi-Fi network and restart to share it.")
     print(f"Admin token: {ADMIN_TOKEN}")
     if GATE.enabled:
         print(f"Proxy passphrase: {GATE.passphrase}" + ("  (generated)" if GATE.generated else ""))

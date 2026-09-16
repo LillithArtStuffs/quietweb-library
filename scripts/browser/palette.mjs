@@ -21,15 +21,21 @@ const MAX_EDGE = 480;
 function parseArguments(argv) {
   const files = [];
   let colours = 10;
+  let crop = null;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--colours" || argv[index] === "--colors") {
       colours = Number(argv[index + 1]) || colours;
+      index += 1;
+    } else if (argv[index] === "--crop") {
+      const parts = String(argv[index + 1] || "").split(",").map(Number);
+      if (parts.length !== 4 || parts.some(Number.isNaN)) throw new Error("--crop takes x,y,width,height");
+      crop = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
       index += 1;
     } else {
       files.push(argv[index]);
     }
   }
-  return { files, colours };
+  return { files, colours, crop };
 }
 
 function toHex([red, green, blue]) {
@@ -57,23 +63,26 @@ const MEDIA_TYPES = {
   ".avif": "image/avif", ".gif": "image/gif", ".bmp": "image/bmp"
 };
 
-async function sample(page, file) {
+async function sample(page, file, crop) {
   // A data: URL keeps the canvas same-origin, so getImageData is allowed.
   const bytes = await readFile(file);
   const type = MEDIA_TYPES[extname(file).toLowerCase()] || "image/png";
   const url = `data:${type};base64,${bytes.toString("base64")}`;
-  return page.evaluate(async ({ url, maxEdge }) => {
+  return page.evaluate(async ({ url, maxEdge, crop }) => {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    // A crop is drawn at full resolution: the regions worth naming, like a
+    // swatch strip, are small and must not be blurred by downscaling.
+    const source = crop || { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight };
+    const scale = crop ? 1 : Math.min(1, maxEdge / Math.max(source.width, source.height));
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    context.drawImage(image, 0, 0, width, height);
+    context.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, width, height);
     const { data } = context.getImageData(0, 0, width, height);
 
     // Bucket to a coarse grid so near-identical pixels collapse together, then
@@ -101,7 +110,7 @@ async function sample(page, file) {
         share: bucket.count / counted
       }))
     };
-  }, { url, maxEdge: MAX_EDGE });
+  }, { url, maxEdge: MAX_EDGE, crop });
 }
 
 function report(title, rows) {
@@ -114,9 +123,9 @@ function report(title, rows) {
 }
 
 async function main() {
-  const { files, colours } = parseArguments(process.argv.slice(2));
+  const { files, colours, crop } = parseArguments(process.argv.slice(2));
   if (!files.length) {
-    console.error("usage: node scripts/browser/palette.mjs <image> [more images...] [--colours N]");
+    console.error("usage: node scripts/browser/palette.mjs <image> [more images...] [--colours N] [--crop x,y,w,h]");
     process.exit(2);
   }
   for (const file of files) {
@@ -128,7 +137,7 @@ async function main() {
   const page = await browser.newPage();
   try {
     for (const file of files) {
-      const { dimensions, counted, buckets } = await sample(page, file);
+      const { dimensions, counted, buckets } = await sample(page, file, crop);
       console.log(`\n${file}  ${dimensions[0]}x${dimensions[1]}  ${counted} opaque pixels sampled`);
       const byShare = [...buckets].sort((a, b) => b.share - a.share).slice(0, colours);
       report("most of the image", byShare);

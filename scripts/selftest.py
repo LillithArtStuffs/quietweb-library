@@ -138,8 +138,12 @@ def run():
 
         @check("no colour is hardcoded outside a theme block")
         def _():
+            # Blank out comments first, keeping line numbers: a hex quoted in a
+            # comment documents a source, it does not paint anything.
+            css = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)),
+                         (WEB / "styles.css").read_text(encoding="utf-8"), flags=re.S)
             offenders = []
-            for number, line in enumerate((WEB / "styles.css").read_text(encoding="utf-8").split("\n"), 1):
+            for number, line in enumerate(css.split("\n"), 1):
                 if "data-theme" in line or line.strip().startswith("--"):
                     continue
                 if re.search(r"#[0-9a-fA-F]{3,6}\b", line):

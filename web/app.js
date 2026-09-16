@@ -6,7 +6,7 @@ const TOMBSTONE_KEY = "quietweb-tombstones";
 const VIEWS = ["library", "add", "reader", "diagnostics", "themes"];
 const THEMES = ["dark", "light", "teto", "wire"];
 const THEME_OPTIONS = [...THEMES, "system"];
-const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#5d315f", wire: "#0a1114" };
+const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#1a1416", wire: "#0a1114" };
 const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 const state = {

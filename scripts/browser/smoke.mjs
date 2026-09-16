@@ -43,6 +43,12 @@ async function withExpectedNetworkErrors(action) {
   try { return await action(); } finally { consoleErrors.splice(start); }
 }
 
+// Rows and buttons animate their background, so a computed-style read taken
+// straight after a theme switch returns a value mid-interpolation.
+async function settleTransitions(page) {
+  await wait(260);
+}
+
 async function goToLibrary(page) {
   await page.evaluate(() => { location.hash = "#library"; });
   await page.waitForSelector("#libraryView.active");
@@ -237,6 +243,81 @@ async function main() {
       await page.press("#consoleInput", "Enter");
       await page.waitForFunction(() => document.getElementById("consoleOutput").textContent.includes("smoke"));
       return "status and tags responded";
+    });
+
+    await check("every theme repaints every surface", async () => {
+      await goToLibrary(page);
+      const signatures = {};
+      for (const theme of ["light", "dark", "teto", "wire"]) {
+        await page.selectOption("#themeSelect", theme);
+        await settleTransitions(page);
+        signatures[theme] = await page.evaluate(() => {
+          const paint = (selector, property) => {
+            const node = document.querySelector(selector);
+            return node ? getComputedStyle(node)[property] : "missing";
+          };
+          return [
+            paint("body", "backgroundColor"),
+            paint(".control-bar", "backgroundColor"),
+            paint(".page-row", "backgroundColor"),
+            paint(".console", "backgroundColor"),
+            paint(".console pre", "color"),
+            paint(".site-header", "backgroundColor"),
+            paint(".button.subtle", "color")
+          ].join(" | ");
+        });
+      }
+      const seen = new Map();
+      for (const [theme, signature] of Object.entries(signatures)) {
+        if (seen.has(signature)) throw new Error(`${theme} paints identically to ${seen.get(signature)}`);
+        seen.set(signature, theme);
+      }
+      return `${seen.size} distinct palettes`;
+    });
+
+    await check("no theme makes text unreadable", async () => {
+      const problems = [];
+      for (const theme of ["light", "dark", "teto", "wire"]) {
+        await page.selectOption("#themeSelect", theme);
+        await settleTransitions(page);
+        const found = await page.evaluate(() => {
+          const parse = (value) => (value.match(/[\d.]+/g) || []).map(Number);
+          const channel = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+          const luminance = ([r, g, b]) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+          const over = (top, bottom) => {
+            const a = top.length > 3 ? top[3] : 1;
+            return [0, 1, 2].map((i) => top[i] * a + bottom[i] * (1 - a));
+          };
+          // Walk up for the first ancestor that actually paints something.
+          const backdrop = (node) => {
+            let layers = [];
+            for (let el = node; el; el = el.parentElement) {
+              const colour = parse(getComputedStyle(el).backgroundColor);
+              if (colour.length && (colour.length < 4 || colour[3] > 0)) {
+                layers.push(colour);
+                if (colour.length < 4 || colour[3] === 1) break;
+              }
+            }
+            return layers.reverse().reduce((base, layer) => over(layer, base), [255, 255, 255]);
+          };
+          const ratio = (selector) => {
+            const node = document.querySelector(selector);
+            if (!node) return null;
+            const front = over(parse(getComputedStyle(node).color), backdrop(node));
+            const back = backdrop(node);
+            const [bright, dark] = [luminance(front), luminance(back)].sort((a, b) => b - a);
+            return { selector, value: (bright + 0.05) / (dark + 0.05) };
+          };
+          return [".lede", ".button.subtle", ".back-link", ".page-row h3", ".page-row p",
+                  ".page-row-tag", ".brand small", ".console pre", ".console-head span",
+                  ".button.accent", ".muted"]
+            .map(ratio).filter(Boolean);
+        });
+        found.filter((entry) => entry.value < 3).forEach((entry) =>
+          problems.push(`${theme} ${entry.selector} ${entry.value.toFixed(2)}:1`));
+      }
+      if (problems.length) throw new Error(problems.join(", "));
+      return "every sampled pair clears 3:1";
     });
 
     await check("the theme choice persists across reloads", async () => {

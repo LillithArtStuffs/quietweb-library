@@ -2,6 +2,10 @@
 server_data/
 *.tmp
 
+# Node (only the optional browser smoke test needs it)
+node_modules/
+package-lock.json
+
 # Python
 __pycache__/
 *.py[cod]

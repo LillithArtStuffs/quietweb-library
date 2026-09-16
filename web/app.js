@@ -4,6 +4,10 @@ const STORE = "pages";
 const BUILD = "0.4";
 const TOMBSTONE_KEY = "quietweb-tombstones";
 const VIEWS = ["library", "add", "reader", "diagnostics"];
+const THEMES = ["dark", "light", "teto", "wire"];
+const THEME_OPTIONS = [...THEMES, "system"];
+const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#5d315f", wire: "#0a1114" };
+const LIGHT_QUERY = "(prefers-color-scheme: light)";
 
 const state = {
   pages: [],
@@ -583,13 +587,17 @@ function showToast(message, action) {
   showToast.timer = setTimeout(() => toast.classList.remove("show"), action ? 8000 : 3000);
 }
 
-function applyTheme(theme) {
-  const selected = ["dark", "light", "teto"].includes(theme) ? theme : "dark";
-  document.documentElement.dataset.theme = selected;
-  if ($("themeSelect")) $("themeSelect").value = selected;
+// The stored value is the *preference*, which may be "system"; data-theme is
+// always a concrete theme so the stylesheet never has to resolve anything.
+function applyTheme(preference) {
+  const chosen = THEME_OPTIONS.includes(preference) ? preference : "dark";
+  const resolved = chosen === "system" ? (matchMedia(LIGHT_QUERY).matches ? "light" : "dark") : chosen;
+  document.documentElement.dataset.theme = resolved;
+  if ($("themeSelect")) $("themeSelect").value = chosen;
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = { dark: "#0d2d38", light: "#173d48", teto: "#5d315f" }[selected];
-  localStorage.setItem("quietweb-theme", selected);
+  if (meta) meta.content = THEME_COLORS[resolved];
+  localStorage.setItem("quietweb-theme", chosen);
+  return resolved;
 }
 
 function logEvent(message) {
@@ -754,7 +762,7 @@ function writeConsole(line) {
 }
 
 const CONSOLE_COMMANDS = {
-  help: () => writeConsole("commands: help, status, pages, tags, tests, sync, export, theme <dark|light|teto>, find <text>, clear, version"),
+  help: () => writeConsole("commands: help, status, pages, tags, tests, sync, export, theme <name>, find <text>, clear, version"),
   version: () => writeConsole(`quietweb build ${BUILD} · ${navigator.userAgent}`),
   status: async () => {
     writeConsole(`pages: ${state.pages.length} | archive: ${formatBytes(state.pages.reduce((total, page) => total + (page.size || 0), 0))} | storage: IndexedDB | origin: ${location.origin}`);
@@ -777,8 +785,12 @@ const CONSOLE_COMMANDS = {
   export: () => { exportLibrary(); writeConsole("export started"); },
   clear: () => { $("consoleOutput").textContent = "Console cleared."; },
   theme: (argument) => {
-    if (argument) { applyTheme(argument); writeConsole(`theme set to ${document.documentElement.dataset.theme}`); return; }
-    writeConsole(`theme: ${document.documentElement.dataset.theme} · try "theme light"`);
+    const options = THEME_OPTIONS.join(", ");
+    if (!argument) return writeConsole(`theme: ${document.documentElement.dataset.theme} · options: ${options}`);
+    const wanted = argument.trim().toLowerCase();
+    if (!THEME_OPTIONS.includes(wanted)) return writeConsole(`unknown theme "${wanted}" · options: ${options}`);
+    const resolved = applyTheme(wanted);
+    writeConsole(wanted === "system" ? `following the system theme · now ${resolved}` : `theme set to ${resolved}`);
   },
   find: (argument) => {
     if (!argument) return writeConsole("usage: find <text>");
@@ -906,7 +918,14 @@ function bindEvents() {
   });
 
   $("runTestsButton").addEventListener("click", runDiagnostics);
-  $("themeSelect").addEventListener("change", (event) => { applyTheme(event.target.value); logEvent(`theme changed · ${event.target.value}`); });
+  $("themeSelect").addEventListener("change", (event) => {
+    const resolved = applyTheme(event.target.value);
+    logEvent(`theme changed · ${event.target.value}${event.target.value === "system" ? ` (${resolved})` : ""}`);
+  });
+  // Follow the OS only while the reader actually asked us to.
+  matchMedia(LIGHT_QUERY).addEventListener("change", () => {
+    if (localStorage.getItem("quietweb-theme") === "system") applyTheme("system");
+  });
   $("dismissAnnouncement").addEventListener("click", () => { $("announcementBanner").hidden = true; });
 
   $("adminToken").value = localStorage.getItem("quietweb-admin-token") || "";

@@ -45,6 +45,18 @@ In LAN mode anyone on the same Wi-Fi can reach the fetch endpoint, so it refuses
 
 The host server owns the shared library at `server_data/library.json`. Enter the admin token (printed at startup) in **Diagnostics**, and saved pages sync to the host while connected browsers poll for updates. Syncing **merges** rather than overwrites: the most recently updated copy of each page wins, and pages you delete stay deleted. `server_data/` is gitignored, so personal pages are never published.
 
+## Themes
+
+Four themes ship: **Light**, **Dark**, **Teto SV**, and **Nightwire**. **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
+
+Every colour the app paints comes from a custom property. A theme is one block of tokens in `web/styles.css` and nothing else — no per-theme rules anywhere in the stylesheet. To add one:
+
+1. Copy an existing `html[data-theme="..."]` block in `web/styles.css` and change the values.
+2. Add the name to `THEMES` and `THEME_COLORS` in `web/app.js`.
+3. Add an `<option>` to `#themeSelect` in `web/index.html`.
+
+`scripts/selftest.py` then fails the build if the new theme leaves any token undefined, if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite additionally checks that each theme actually repaints every surface, and that no theme drops a text/background pair below a 3:1 contrast ratio.
+
 ## Keyboard shortcuts
 
 | Key | Action |

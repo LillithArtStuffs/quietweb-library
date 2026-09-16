@@ -124,6 +124,44 @@ def run():
             assert not missing, f"missing ids: {missing}"
             return f"{len(used)} lookups resolved"
 
+        @check("every theme defines every colour token")
+        def _():
+            css = (WEB / "styles.css").read_text(encoding="utf-8")
+            blocks = re.findall(r'(?:^:root|html\[data-theme="([a-z]+)"\]) \{(.*?)\}', css, re.S | re.M)
+            assert len(blocks) >= 2, "no theme blocks found"
+            named = [(name or "light", set(re.findall(r"--([a-z-]+)\s*:", body))) for name, body in blocks]
+            reference = set().union(*(tokens for _, tokens in named))
+            for name, tokens in named:
+                missing = sorted(reference - tokens)
+                assert not missing, f"theme '{name}' is missing {missing}"
+            return f"{len(named)} themes x {len(reference)} tokens"
+
+        @check("no colour is hardcoded outside a theme block")
+        def _():
+            offenders = []
+            for number, line in enumerate((WEB / "styles.css").read_text(encoding="utf-8").split("\n"), 1):
+                if "data-theme" in line or line.strip().startswith("--"):
+                    continue
+                if re.search(r"#[0-9a-fA-F]{3,6}\b", line):
+                    offenders.append(f"{number}: {line.split('{')[0].strip()[:40]}")
+            assert not offenders, "hardcoded colours: " + "; ".join(offenders[:5])
+            return "all colours come from tokens"
+
+        @check("every theme the app offers has a stylesheet block")
+        def _():
+            css = (WEB / "styles.css").read_text(encoding="utf-8")
+            app = (WEB / "app.js").read_text(encoding="utf-8")
+            html = (WEB / "index.html").read_text(encoding="utf-8")
+            declared = set(re.findall(r'html\[data-theme="([a-z]+)"\]\s*\{', css)) | {"light"}
+            listed = set(re.findall(r'const THEMES = \[([^\]]+)\]', app)[0].replace('"', "").replace(" ", "").split(","))
+            picker = re.search(r'<select id="themeSelect".*?</select>', html, re.S).group(0)
+            offered = set(re.findall(r'<option value="([a-z]+)"', picker)) - {"system"}
+            assert listed <= declared, f"app.js offers themes with no CSS: {sorted(listed - declared)}"
+            assert offered == listed, f"the picker and app.js disagree: {sorted(offered ^ listed)}"
+            colours = set(re.findall(r'(\w+): "#', re.search(r'const THEME_COLORS = \{([^}]+)\}', app).group(1)))
+            assert colours == listed, f"THEME_COLORS is missing {sorted(listed - colours)}"
+            return f"{len(listed)} themes: {', '.join(sorted(listed))}"
+
         @check("service worker never caches live server state")
         def _():
             worker = (WEB / "sw.js").read_text(encoding="utf-8")

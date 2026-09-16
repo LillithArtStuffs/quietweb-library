@@ -48,7 +48,7 @@ In LAN mode anyone on the same Wi-Fi can reach the fetch endpoint, so it refuses
 Open **Browse** in the header, or go to `/p/` directly, and type an address. The page is fetched by the server and served back with every link, image and stylesheet rewritten to come through the proxy, so the device you are reading on never talks to the site.
 
 ```text
---proxy-passphrase X   set the passphrase; one is generated and printed if omitted
+--proxy-passphrase X   set the passphrase, at least 12 characters; generated if omitted
 --no-proxy-auth        serve the proxy with no passphrase at all
 --strip-scripts        remove scripts from browsed pages: safer, breaks more sites
 ```

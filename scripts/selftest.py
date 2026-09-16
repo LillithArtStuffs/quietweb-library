@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 import json
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -257,6 +258,50 @@ def run():
         def _():
             request(base, "/api/admin/announcement", "POST", {"message": "nope"}, expect=403)
             return "rejected anonymous broadcast"
+
+        @check("a short proxy passphrase is refused")
+        def _():
+            import ipaddress  # noqa: F401  (used by the LAN check below)
+            attempt = subprocess.run(
+                [sys.executable, str(ROOT / "server" / "offline_server.py"),
+                 "--host", "127.0.0.1", "--port", "0", "--proxy-passphrase", "1"],
+                capture_output=True, text=True, timeout=30)
+            assert attempt.returncode != 0, "a one character passphrase was accepted"
+            assert "at least" in attempt.stderr, attempt.stderr[:200]
+            assert "--no-proxy-auth" in attempt.stderr, "the refusal does not say what to do instead"
+            return "refused, and pointed at --no-proxy-auth"
+
+        @check("only a reachable LAN address is offered to other devices")
+        def _():
+            import ipaddress
+            # ipaddress calls 192.0.0.2 private, but nothing can route to it;
+            # on cellular that is exactly what the probe returns.
+            for address, reachable in [("192.0.0.2", False), ("169.254.3.4", False), ("100.64.0.1", False),
+                                       ("192.168.1.50", True), ("10.0.0.5", True), ("172.20.1.1", True)]:
+                counted = any(ipaddress.ip_address(address) in net for net in offline_server.LAN_NETWORKS)
+                assert counted is reachable, f"{address} counted as LAN={counted}"
+            return "6 addresses classified, special-use ranges excluded"
+
+        @check("a reader closing the tab does not print a traceback")
+        def _():
+            import contextlib
+            import io
+            server = offline_server.Server.__new__(offline_server.Server)
+            captured = io.StringIO()
+            try:
+                raise BrokenPipeError(32, "Broken pipe")
+            except BrokenPipeError:
+                with contextlib.redirect_stderr(captured):
+                    server.handle_error(None, ("127.0.0.1", 1))
+            assert captured.getvalue() == "", f"noisy on disconnect: {captured.getvalue()[:120]}"
+            # A real fault still has to be reported.
+            try:
+                raise RuntimeError("something actually broke")
+            except RuntimeError:
+                with contextlib.redirect_stderr(captured):
+                    server.handle_error(None, ("127.0.0.1", 1))
+            assert "something actually broke" in captured.getvalue(), "real errors were swallowed too"
+            return "silent on disconnect, still loud on real faults"
 
         @check("the a-Shell launcher runs the server without a subprocess")
         def _():

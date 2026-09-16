@@ -2,9 +2,22 @@
   "name": "Quietweb Library",
   "short_name": "Quietweb",
   "description": "A local-first web library for saved pages and offline reading.",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#f3f0e8",
+  "orientation": "any",
+  "background_color": "#10191d",
   "theme_color": "#173d48",
-  "icons": []
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "icons/quietweb-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/quietweb-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/quietweb-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/quietweb.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Add something", "url": "./#add" },
+    { "name": "Diagnostics", "url": "./#diagnostics" }
+  ]
 }

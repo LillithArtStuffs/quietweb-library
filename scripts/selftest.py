@@ -17,7 +17,6 @@ import json
 import re
 import shutil
 import struct
-import subprocess
 import sys
 import tempfile
 import time
@@ -260,17 +259,26 @@ def run():
             request(base, "/api/admin/announcement", "POST", {"message": "nope"}, expect=403)
             return "rejected anonymous broadcast"
 
-        @check("a short proxy passphrase is refused")
+        @check("a short secret is refused")
         def _():
-            import ipaddress  # noqa: F401  (used by the LAN check below)
-            attempt = subprocess.run(
-                [sys.executable, str(ROOT / "server" / "offline_server.py"),
-                 "--host", "127.0.0.1", "--port", "0", "--proxy-passphrase", "1"],
-                capture_output=True, text=True, timeout=30)
-            assert attempt.returncode != 0, "a one character passphrase was accepted"
-            assert "at least" in attempt.stderr, attempt.stderr[:200]
-            assert "--no-proxy-auth" in attempt.stderr, "the refusal does not say what to do instead"
-            return "refused, and pointed at --no-proxy-auth"
+            # Called directly rather than by launching the server: a-Shell has no
+            # fork(), so a test that shells out cannot run on the phone, which is
+            # where this suite earns its keep.
+            for flag, value, advice in [("--proxy-passphrase", "1", " use --no-proxy-auth"),
+                                        ("--admin-token", "short", "")]:
+                try:
+                    offline_server.reject_short_secret(flag, value, advice)
+                except SystemExit as refusal:
+                    assert "at least 12" in str(refusal), refusal
+                    if advice:
+                        assert "--no-proxy-auth" in str(refusal), "no advice on what to do instead"
+                else:
+                    raise AssertionError(f"{flag} accepted {value!r}")
+            # A long one, and an empty one meaning "generate it", both pass.
+            offline_server.reject_short_secret("--proxy-passphrase", "a-long-enough-secret")
+            offline_server.reject_short_secret("--proxy-passphrase", "")
+            return "short refused, long and unset accepted"
+
 
         @check("only a reachable LAN address is offered to other devices")
         def _():
@@ -303,6 +311,17 @@ def run():
                     server.handle_error(None, ("127.0.0.1", 1))
             assert "something actually broke" in captured.getvalue(), "real errors were swallowed too"
             return "silent on disconnect, still loud on real faults"
+
+        @check("the self-test itself spawns no processes")
+        def _():
+            # iOS has no fork(). A check that shells out passes here and fails on
+            # the phone, which is the one place this suite is irreplaceable.
+            # Look for calls, not the word: other checks discuss subprocesses.
+            source = Path(__file__).read_text(encoding="utf-8")
+            code = "\n".join(line for line in source.split("\n") if not line.lstrip().startswith("#"))
+            spawns = re.findall(r"^\s*import subprocess|\bsubprocess\.\w+\(|\bos\.(?:system|fork|spawn\w*|popen)\(", code, re.M)
+            assert not spawns, f"the suite spawns processes: {sorted(set(spawns))}"
+            return "no fork, so it runs anywhere Python does"
 
         @check("the a-Shell launcher runs the server without a subprocess")
         def _():

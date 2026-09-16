@@ -459,6 +459,12 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json(400, {"error": str(error)})
 
 
+def reject_short_secret(flag, value, advice=""):
+    """Refuse a secret too short to be worth having."""
+    if value and len(value) < MIN_SECRET:
+        raise SystemExit(f"{flag} must be at least {MIN_SECRET} characters.{advice}")
+
+
 def local_ip():
     """The address another device on the same Wi-Fi could use, if there is one.
 
@@ -511,14 +517,12 @@ def main():
     arguments = parser.parse_args()
 
     if arguments.admin_token:
-        if len(arguments.admin_token) < MIN_SECRET:
-            raise SystemExit(f"--admin-token must be at least {MIN_SECRET} characters.")
+        reject_short_secret("--admin-token", arguments.admin_token)
         ADMIN_TOKEN = arguments.admin_token
-    if arguments.proxy_passphrase and len(arguments.proxy_passphrase) < MIN_SECRET:
-        raise SystemExit(
-            f"--proxy-passphrase must be at least {MIN_SECRET} characters. It is the only thing "
-            "between the proxy and anyone who can reach this server; use --no-proxy-auth if you "
-            "genuinely want it open.")
+    reject_short_secret(
+        "--proxy-passphrase", arguments.proxy_passphrase,
+        " It is the only thing between the proxy and anyone who can reach this server;"
+        " use --no-proxy-auth if you genuinely want it open.")
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
     KEEP_SCRIPTS = not arguments.strip_scripts
     GATE = gatekeeper.Gate(passphrase=arguments.proxy_passphrase or None,

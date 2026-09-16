@@ -189,3 +189,80 @@ main { width: min(1180px, calc(100% - 24px)); padding: 24px 0 36px; }
 .console { margin-top: 18px; }
 .console pre { min-height: 130px; max-height: 220px; padding: 12px; font-size: 11px; }
 @media (max-width: 760px) { main { width: min(100% - 28px, 1160px); padding-top: 28px; } .site-header { padding: 13px 14px; } .connection { display: none; } .header-button { display: none; } .view-intro { display: block; margin-bottom: 24px; } .view-intro .button { margin-top: 18px; } .control-bar { display: grid; grid-template-columns: 1fr; } .select-box { justify-content: space-between; } .page-row { grid-template-columns: 1fr 86px; gap: 7px 16px; } .page-row-tag { grid-column: 1 / -1; } .page-row h3, .page-row p { grid-column: 1; } .page-row-date { grid-column: 2; grid-row: 2 / span 2; } .entry-layout { grid-template-columns: 1fr; } .two-up { grid-template-columns: 1fr; gap: 0; } .reader-top { align-items: flex-start; flex-direction: column; margin-bottom: 28px; } .reader-body iframe { min-height: 520px; } .test-result { grid-template-columns: 28px 1fr; } .test-time { grid-column: 2; } .server-stats { grid-template-columns: 1fr; } .admin-form { grid-template-columns: 1fr; } }
+
+/* --------------------------------------------------- build 0.4 additions */
+
+/* Several panels are toggled with the hidden attribute, whose UA display:none
+   loses to any class that sets display. Put it back on top. */
+[hidden] { display: none !important; }
+
+/* The tag and the type label are stacked, not run together. */
+.page-row-tag { display: block; }
+
+/* Tags are clickable shortcuts into the search box. */
+.page-row-tag { padding: 0; border: 0; background: transparent; text-align: left; }
+.page-row-tag:hover { color: var(--coral); text-decoration: underline; }
+
+.button.danger { color: var(--coral-dark); }
+.button.danger:hover { color: white; border-color: var(--coral); background: var(--coral); }
+html[data-theme="dark"] .button.subtle.danger { color: #f3a794; }
+.button:disabled { opacity: .5; cursor: progress; transform: none; }
+
+.empty-state .button { margin-top: 18px; }
+
+/* Warnings are not failures: an iPad on a LAN address is a supported setup. */
+.test-result.warn { border-left: 3px solid #d9a441; }
+.test-result.warn .test-icon { background: #d9a441; }
+
+.announcement { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.announcement-dismiss { padding: 0 4px; color: inherit; border: 0; background: transparent; font-size: 16px; line-height: 1; opacity: .75; }
+.announcement-dismiss:hover { opacity: 1; }
+
+.toast-action { margin-left: 12px; padding: 4px 9px; color: inherit; border: 1px solid currentColor; border-radius: 3px; background: transparent; font: 700 11px "Trebuchet MS", sans-serif; }
+.toast { pointer-events: auto; }
+.toast:not(.show) { pointer-events: none; }
+
+.shortcut-help { position: fixed; right: 22px; bottom: 80px; z-index: 6; padding: 16px 18px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); font: 12px "Trebuchet MS", sans-serif; }
+.shortcut-help strong { display: block; margin-bottom: 10px; color: var(--muted); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.shortcut-help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.shortcut-help dt { padding: 1px 7px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); background: var(--blue-soft); font: 11px Consolas, "Courier New", monospace; text-align: center; }
+.shortcut-help dd { margin: 0; color: var(--muted); }
+
+/* Respect the notch and the home indicator when installed on iOS. */
+.site-header { padding-top: max(9px, env(safe-area-inset-top)); padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); }
+main { padding-bottom: max(36px, env(safe-area-inset-bottom)); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .view { animation: none; }
+  .button:hover, .page-row:hover { transform: none; }
+}
+
+@media (max-width: 760px) {
+  /* Diagnostics is where the server token lives, so it must stay reachable. */
+  .header-button { display: inline-block; padding: 7px 9px; font-size: 11px; }
+  .site-header { flex-wrap: wrap; gap: 8px 12px; }
+  .header-actions { flex: 1 1 100%; justify-content: flex-end; }
+  .theme-picker span { display: none; }
+  .reader-actions { width: 100%; }
+  .reader-actions .button { flex: 1 1 auto; }
+  .shortcut-help { display: none; }
+  .toast { right: 14px; left: 14px; max-width: none; bottom: max(14px, env(safe-area-inset-bottom)); }
+  /* Touch targets below 44px are a coin flip on iOS. */
+  .button, .filter-chip { min-height: 44px; }
+  .page-row { min-height: 88px; }
+  /* Full-width stacking pushed the library below the fold, so pair the
+     secondary actions up on one row. */
+  .control-bar { grid-template-columns: repeat(3, 1fr); }
+  .search-box, .select-box { grid-column: 1 / -1; }
+  .control-bar .button { padding-right: 8px; padding-left: 8px; }
+
+  /* The row's grid children are the wrapper divs, so place those rather than
+     the tag and heading inside them. */
+  .page-row { grid-template-columns: 1fr; gap: 6px; }
+  .page-row > div { grid-column: 1; }
+  .page-row > div:first-child { display: flex; align-items: baseline; gap: 9px; }
+  .page-row-tag { display: inline; }
+  .row-type { margin-top: 0; }
+  .page-row-date { grid-column: 1; grid-row: auto; text-align: left; }
+}

@@ -2,18 +2,24 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#173d48">
   <meta name="description" content="A local-first web library for saved pages and offline reading.">
-  <link rel="manifest" href="manifest.webmanifest?v=5">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Quietweb">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="icons/quietweb.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/quietweb-192.png">
+  <link rel="manifest" href="manifest.webmanifest?v=6">
+  <link rel="stylesheet" href="styles.css?v=6">
   <title>Quietweb Library</title>
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="#library" aria-label="Quietweb home">
       <span class="brand-mark">Q</span>
-      <span><strong>quietweb</strong><small>web build 0.3 · your local reading room</small></span>
+      <span><strong>quietweb</strong><small>web build 0.4 · your local reading room</small></span>
     </a>
     <div class="header-actions">
       <span id="connectionState" class="connection"><i></i> Checking server...</span>
@@ -22,8 +28,11 @@
       <button id="installButton" class="button subtle" hidden>Install app</button>
     </div>
   </header>
-  <div id="announcementBanner" class="announcement" hidden></div>
-  <div id="serverNotice" class="server-notice" hidden>Quietweb server not found. Local pages still work, but fetch, uptime, and broadcasts are unavailable.</div>
+  <div id="announcementBanner" class="announcement" hidden>
+    <span id="announcementText"></span>
+    <button id="dismissAnnouncement" class="announcement-dismiss" aria-label="Dismiss announcement">×</button>
+  </div>
+  <div id="serverNotice" class="server-notice" hidden>Quietweb server not found. Local pages still work, but fetching a URL, uptime, and broadcasts are unavailable.</div>
 
   <main>
     <section id="libraryView" class="view active" aria-labelledby="libraryHeading">
@@ -37,12 +46,12 @@
       </div>
 
       <div class="control-bar">
-        <label class="search-box"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" placeholder="Search titles, tags, and content" autocomplete="off"></label>
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="searchInput" type="search" placeholder="Search titles, tags, and content  (press /)" autocomplete="off" enterkeyhint="search"></label>
         <label class="select-box"><span>Sort</span><select id="sortSelect"><option value="recent">Recently added</option><option value="oldest">Oldest first</option><option value="title">Title A-Z</option><option value="size">Largest archive</option></select></label>
-        <button id="filterButton" class="button subtle" aria-expanded="false">Filter <span id="filterCount"></span></button>
+        <button id="filterButton" class="button subtle" aria-expanded="false" aria-controls="filterPanel">Filter <span id="filterCount"></span></button>
         <button id="exportButton" class="button subtle">Export</button>
         <button id="importButton" class="button subtle">Import</button>
-        <input id="libraryFileInput" type="file" accept="application/json" hidden>
+        <input id="libraryFileInput" type="file" accept="application/json,.json" hidden>
       </div>
       <div id="filterPanel" class="filter-panel" hidden>
         <button class="filter-chip active" data-filter="all">All pages</button>
@@ -57,17 +66,34 @@
     </section>
 
     <section id="addView" class="view" aria-labelledby="addHeading">
-      <div class="view-intro compact"><div><p class="kicker">New entry</p><h1 id="addHeading">Put something aside.</h1><p class="lede">Archive a readable page, save a bookmark, or write a note for later.</p></div><button class="button subtle" data-view="library">Back to library</button></div>
+      <div class="view-intro compact">
+        <div>
+          <p class="kicker" id="addKicker">New entry</p>
+          <h1 id="addHeading">Put something aside.</h1>
+          <p class="lede" id="addLede">Archive a readable page, save a bookmark, or write a note for later.</p>
+        </div>
+        <button class="button subtle" data-view="library">Back to library</button>
+      </div>
       <form id="entryForm" class="entry-layout">
         <div class="entry-main panel">
-          <label>Title<input id="titleInput" maxlength="120" placeholder="What are you saving?"></label>
-          <div class="two-up"><label>Tag<input id="tagInput" maxlength="40" placeholder="article, reference, project..."></label><label>Type<select id="typeInput"><option value="snapshot">Web snapshot</option><option value="bookmark">Bookmark only</option><option value="note">Note</option><option value="code">Code</option></select></label></div>
-          <label>Source URL <span class="label-note">optional</span><input id="urlInput" type="url" placeholder="https://example.com/article"></label>
+          <label>Title<input id="titleInput" maxlength="120" placeholder="What are you saving?" enterkeyhint="next"></label>
+          <div class="two-up">
+            <label>Tag<input id="tagInput" maxlength="40" placeholder="article, reference, project..."></label>
+            <label>Type<select id="typeInput"><option value="snapshot">Web snapshot</option><option value="bookmark">Bookmark only</option><option value="note">Note</option><option value="code">Code</option></select></label>
+          </div>
+          <label>Source URL <span class="label-note">optional</span><input id="urlInput" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://example.com/article"></label>
           <label>Content <span class="label-note">optional when fetching a URL</span><textarea id="contentInput" rows="14" placeholder="Paste text or code here..."></textarea></label>
-          <div class="entry-actions"><button type="submit" class="button accent">Save to library</button><button type="button" id="fetchButton" class="button subtle">Fetch URL content</button><button type="button" id="clearFormButton" class="button text-button">Clear</button></div>
+          <div class="entry-actions">
+            <button type="submit" id="saveEntryButton" class="button accent">Save to library</button>
+            <button type="button" id="fetchButton" class="button subtle">Fetch URL content</button>
+            <button type="button" id="clearFormButton" class="button text-button">Clear</button>
+          </div>
           <p id="entryStatus" class="form-status" role="status"></p>
         </div>
-        <aside class="entry-aside"><div class="tip"><span class="tip-icon">↳</span><h2>How it works</h2><p>A snapshot stores sanitized page HTML locally. It is the version you can read later without a connection.</p></div><label class="dropzone" id="dropzone"><input id="fileInput" type="file" accept=".html,.htm,.txt,.md,.json" hidden><strong>Drop a file here</strong><span>HTML, text, Markdown, or an exported library</span></label></aside>
+        <aside class="entry-aside">
+          <div class="tip"><span class="tip-icon">↳</span><h2>How it works</h2><p>A snapshot stores sanitized page HTML locally. It is the version you can read later without a connection. Fetching goes through the local Quietweb server, because browsers refuse to read other sites directly.</p></div>
+          <label class="dropzone" id="dropzone"><input id="fileInput" type="file" accept=".html,.htm,.txt,.md,.json" hidden><strong>Drop a file here</strong><span>HTML, text, Markdown, or an exported library</span></label>
+        </aside>
       </form>
     </section>
 
@@ -88,14 +114,27 @@
         <p id="adminStatus" class="form-status" role="status"></p>
       </section>
     </section>
+
     <section class="console" aria-label="Quietweb activity console">
       <div class="console-head"><strong>Activity console</strong><span id="consoleMode">live app readout · safe commands only</span></div>
-      <pre id="consoleOutput">Quietweb activity console ready.</pre>
-      <form id="consoleForm" class="console-form"><span>›</span><input id="consoleInput" autocomplete="off" placeholder="help, status, clear, theme"><button class="button subtle" type="submit">Run</button></form>
+      <pre id="consoleOutput">Quietweb activity console ready. Type help for commands.</pre>
+      <form id="consoleForm" class="console-form"><span>›</span><input id="consoleInput" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="help, status, pages, find &lt;text&gt;"><button class="button subtle" type="submit">Run</button></form>
     </section>
   </main>
 
+  <aside id="shortcutHelp" class="shortcut-help" hidden>
+    <strong>Keyboard</strong>
+    <dl>
+      <dt>/</dt><dd>Search</dd>
+      <dt>n</dt><dd>New entry</dd>
+      <dt>e</dt><dd>Edit the open page</dd>
+      <dt>d</dt><dd>Diagnostics</dd>
+      <dt>Esc</dt><dd>Back to library</dd>
+      <dt>?</dt><dd>Toggle this panel</dd>
+    </dl>
+  </aside>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=5" type="module"></script>
+  <script src="app.js?v=6" type="module"></script>
 </body>
 </html>

@@ -11,7 +11,7 @@ pages you are authorised to archive.
 from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
@@ -126,17 +126,46 @@ def make_snapshot(raw_html):
             f"<body>{body}</body></html>")
 
 
+RESOLVE_TIMEOUT = 5
+
+
+def resolve(hostname):
+    """Resolve a name with a ceiling on how long the resolver may take.
+
+    getaddrinfo cannot be interrupted and blocks for a long time on some
+    platforms — on iOS it can stall indefinitely — so it runs on a throwaway
+    thread that the request is willing to walk away from.
+    """
+    outcome = {}
+
+    def work():
+        try:
+            outcome["infos"] = socket.getaddrinfo(hostname, None)
+        except OSError as error:
+            outcome["error"] = error
+
+    worker = Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(RESOLVE_TIMEOUT)
+    if "infos" in outcome:
+        return outcome["infos"]
+    if "error" in outcome:
+        return []  # Unresolvable; the caller treats an empty result as unsafe.
+    raise ValueError(f"Could not resolve {hostname} within {RESOLVE_TIMEOUT} seconds.")
+
+
 def is_private_host(hostname):
-    """True when a hostname resolves only to loopback, link-local, or LAN addresses."""
+    """True when a host is, or resolves only to, an address on this machine or LAN."""
+    def restricted(address):
+        return address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
+
+    # A literal address needs no resolver, and asking about one can block.
     try:
-        infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        return True  # Unresolvable: treat as unsafe rather than guessing.
-    for info in infos:
-        address = ipaddress.ip_address(info[4][0])
-        if not (address.is_private or address.is_loopback or address.is_link_local or address.is_reserved):
-            return False
-    return True
+        return restricted(ipaddress.ip_address(str(hostname).strip("[]")))
+    except ValueError:
+        pass
+    # An empty result means it did not resolve, so all() refuses it.
+    return all(restricted(ipaddress.ip_address(info[4][0])) for info in resolve(hostname))
 
 
 def fetch_page(target):

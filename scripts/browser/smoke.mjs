@@ -19,6 +19,7 @@ import { chromium } from "playwright";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PORT = Number(process.env.QUIETWEB_PORT || 8799);
 const TOKEN = "smoke-test-token-000000";
+const PASSPHRASE = "smoke-passphrase-000";
 let BASE = "";
 
 const results = [];
@@ -61,7 +62,9 @@ async function startServer() {
     "--host", "127.0.0.1", "--port", String(PORT), "--admin-token", TOKEN,
     // The fixture site below lives on loopback, which the SSRF guard blocks by
     // default. selftest.py covers that guard; here we need the fetch to land.
-    "--allow-private-fetch"
+    "--allow-private-fetch",
+    // Run with the gate on, as a real server does, and unlock below.
+    "--proxy-passphrase", PASSPHRASE
   ], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
 
   // The server falls back to the next free port, so take the URL it prints
@@ -117,6 +120,47 @@ async function main() {
 
   try {
     await page.goto(BASE, { waitUntil: "networkidle" });
+
+    await check("a locked server challenges before it serves anything private", () => withExpectedNetworkErrors(async () => {
+      const library = await page.evaluate(async () => {
+        const response = await fetch("/api/library", { cache: "no-store" });
+        const body = await response.json().catch(() => ({}));
+        return { status: response.status, unlock: body.unlock };
+      });
+      if (library.status !== 401) throw new Error(`/api/library returned ${library.status} while locked`);
+      if (library.unlock !== "/p/login") throw new Error("the 401 does not say where to unlock");
+      const proxy = await page.evaluate(async () => (await fetch("/p/", { redirect: "manual" })).status);
+      if (proxy !== 401) throw new Error(`/p/ returned ${proxy} while locked`);
+      // The shell still has to load, or it cannot tell you it is locked.
+      await page.waitForSelector(".page-row");
+      return "library and proxy refused, app shell still loads";
+    }));
+
+    await check("a locked server explains itself in the archiver", () => withExpectedNetworkErrors(async () => {
+      await goToLibrary(page);
+      await page.click('[data-view="add"]');
+      await page.fill("#urlInput", fixtureUrl);
+      await page.click("#fetchButton");
+      await page.waitForFunction(
+        () => /locked/i.test(document.getElementById("entryStatus").textContent),
+        null, { timeout: 20000 });
+      const status = await page.locator("#entryStatus").innerText();
+      if (!/passphrase/i.test(status)) throw new Error(`unhelpful message: "${status}"`);
+      await page.click("#clearFormButton");
+      return "told to unlock rather than a parse error";
+    }));
+
+    await check("the passphrase unlocks it for the whole app", async () => {
+      await page.goto(`${BASE}/p/login`, { waitUntil: "domcontentloaded" });
+      await page.fill('input[name="passphrase"]', PASSPHRASE);
+      await page.click("button");
+      await page.waitForLoadState("networkidle");
+      await page.goto(BASE, { waitUntil: "networkidle" });
+      const library = await page.evaluate(async () => (await fetch("/api/library", { cache: "no-store" })).status);
+      if (library !== 200) throw new Error(`/api/library still returns ${library} after unlocking`);
+      consoleErrors.length = 0;  // Everything before the unlock was meant to fail.
+      return "one login opens the library, the proxy and the archiver";
+    });
 
     await check("the app boots with its seed pages", async () => {
       await page.waitForSelector(".page-row");

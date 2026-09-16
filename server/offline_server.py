@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 import browse
+import gate as gatekeeper
 import argparse
 import ipaddress
 import json
@@ -44,6 +45,7 @@ ADMIN_TOKEN = secrets.token_urlsafe(18)
 ANNOUNCEMENT = {"message": "", "updated": None}
 ALLOW_PRIVATE_FETCH = False
 KEEP_SCRIPTS = True
+GATE = None
 MAX_PROXY_BYTES = 24 * 1024 * 1024
 BROWSER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -309,8 +311,33 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def gated(self):
+        return GATE is not None and not GATE.permits(self.headers.get("Cookie"))
+
+    def send_login(self, next_path="/p/", message="", status=200):
+        payload = gatekeeper.login_page(browse.escape_attribute(next_path), message).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/p/login":
+            self.send_login(parse_qs(parsed.query).get("next", ["/p/"])[0])
+            return
+        # Behind the gate: the two endpoints that make this server fetch someone
+        # else's URL, and the saved library, which is nobody else's business.
+        # Left open: the app shell and /api/status, so a locked server can still
+        # load and say so rather than failing silently.
+        if parsed.path.startswith(browse.PREFIX) and self.gated():
+            self.send_login(self.path, status=401)
+            return
+        if parsed.path in {"/api/fetch", "/api/library"} and self.gated():
+            self.send_json(401, {"error": "locked", "unlock": "/p/login"})
+            return
         if parsed.path == "/p/go":
             typed = (parse_qs(parsed.query).get("url", [""])[0] or "").strip()
             if typed and "://" not in typed:
@@ -356,6 +383,22 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/p/login":
+            length = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
+            fields = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
+            following = fields.get("next", ["/p/"])[0]
+            if not following.startswith("/"):
+                following = "/p/"  # Never bounce to an address someone else chose.
+            if GATE is None or GATE.matches(fields.get("passphrase", [""])[0]):
+                self.send_response(303)
+                self.send_header("Location", following)
+                if GATE is not None:
+                    self.send_header("Set-Cookie", GATE.cookie_header(GATE.issue()))
+                self.end_headers()
+                return
+            time.sleep(1)  # Enough to make guessing tedious without locking anyone out.
+            self.send_login(following, "That passphrase was not right.", status=401)
+            return
         if parsed.path not in {"/api/library", "/api/admin/announcement"}:
             self.send_json(404, {"error": "Not found"})
             return
@@ -407,13 +450,15 @@ def serve(host, port):
 
 
 def main():
-    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH, KEEP_SCRIPTS
+    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH, KEEP_SCRIPTS, GATE
     parser = argparse.ArgumentParser(description="Serve Quietweb locally or on an explicitly chosen network interface.")
     parser.add_argument("--host", default=HOST, help="Bind address; use 0.0.0.0 only on a trusted network.")
     parser.add_argument("--port", type=int, default=PORT, help="Port to serve on; the next free port is used if it is busy.")
     parser.add_argument("--admin-token", default="", help="Optional fixed admin token for this server session.")
     parser.add_argument("--allow-private-fetch", action="store_true", help="Permit archiving private/LAN addresses. Off by default.")
     parser.add_argument("--strip-scripts", action="store_true", help="Remove scripts from browsed pages. Safer, but breaks more sites.")
+    parser.add_argument("--proxy-passphrase", default="", help="Passphrase for the browsing proxy. One is generated if omitted.")
+    parser.add_argument("--no-proxy-auth", action="store_true", help="Serve the proxy with no passphrase. Only ever on a network you trust.")
     arguments = parser.parse_args()
 
     if arguments.admin_token:
@@ -422,6 +467,8 @@ def main():
         ADMIN_TOKEN = arguments.admin_token
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
     KEEP_SCRIPTS = not arguments.strip_scripts
+    GATE = gatekeeper.Gate(passphrase=arguments.proxy_passphrase or None,
+                           enabled=not arguments.no_proxy_auth)
 
     httpd = serve(arguments.host, arguments.port)
     port = httpd.server_address[1]
@@ -437,6 +484,11 @@ def main():
             print(f"Find this device's Wi-Fi IP, then open http://<ip>:{port}/ on the other device.")
         print("LAN mode is enabled. Use this only on a trusted private network.")
     print(f"Admin token: {ADMIN_TOKEN}")
+    if GATE.enabled:
+        print(f"Proxy passphrase: {GATE.passphrase}" + ("  (generated)" if GATE.generated else ""))
+    else:
+        print("WARNING: the browsing proxy has no passphrase. Anyone who can reach this")
+        print("         server can route traffic through your connection. Do not expose it.")
     print("Press Ctrl+C to stop the local archive service.")
     try:
         httpd.serve_forever()

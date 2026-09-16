@@ -47,15 +47,23 @@ The host server owns the shared library at `server_data/library.json`. Enter the
 
 ## Themes
 
-Four themes ship: **Light**, **Dark**, **Teto SV**, and **Nightwire**. **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
+Four themes ship: **Light**, **Dark**, **Teto SV** (crimson on warm black), and **Nightwire** (near-black with an acid-green accent). **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
 
-Every colour the app paints comes from a custom property. A theme is one block of tokens in `web/styles.css` and nothing else — no per-theme rules anywhere in the stylesheet. To add one:
+Every colour the app paints comes from a custom property — 49 tokens, including a full syntax palette. A theme is one block of tokens in `web/styles.css` and nothing else; there are no per-theme rules anywhere in the stylesheet. To add one:
 
 1. Copy an existing `html[data-theme="..."]` block in `web/styles.css` and change the values.
 2. Add the name to `THEMES` and `THEME_COLORS` in `web/app.js`.
 3. Add an `<option>` to `#themeSelect` in `web/index.html`.
 
-`scripts/selftest.py` then fails the build if the new theme leaves any token undefined, if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite additionally checks that each theme actually repaints every surface, and that no theme drops a text/background pair below a 3:1 contrast ratio.
+`scripts/selftest.py` then fails the build if the new theme leaves any token undefined, if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite additionally checks that each theme repaints every surface, that syntax colours change with it, and that no theme drops a text/background pair below a 3:1 contrast ratio.
+
+## Syntax highlighting
+
+Pages saved as **Code** are highlighted in the reader, themed from the same tokens as everything else. JavaScript, Python, **Ren'Py**, HTML, CSS, and JSON are recognised.
+
+The language comes from the page's extension when a file is imported, and is otherwise detected from the content — so pasting a Ren'Py script into a page tagged `code` is enough. The detected language shows as a badge next to the reader's metadata.
+
+There are no dependencies and no build step: the highlighter is a small tokenizer in `web/app.js` that emits DOM nodes rather than markup, so highlighted source can never turn into HTML. Files over 200 KB render as plain text instead. To add a language, add a grammar to `GRAMMARS` (and keywords to `KEYWORDS`/`BUILTINS`); the self-test fails if a grammar emits a token class the stylesheet does not style.
 
 ## Keyboard shortcuts
 

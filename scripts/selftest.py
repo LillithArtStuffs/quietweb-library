@@ -162,6 +162,18 @@ def run():
             assert colours == listed, f"THEME_COLORS is missing {sorted(listed - colours)}"
             return f"{len(listed)} themes: {', '.join(sorted(listed))}"
 
+        @check("every highlight class the app emits has a style")
+        def _():
+            app = (WEB / "app.js").read_text(encoding="utf-8")
+            css = (WEB / "styles.css").read_text(encoding="utf-8")
+            grammars = re.findall(r'\["(\w+)", String\.raw', app)
+            emitted = set(grammars) - {"word"}
+            emitted |= {"keyword", "builtin", "function"}  # what "word" is reclassified into
+            styled = set(re.findall(r"\.syn-([a-z]+)", css))
+            assert emitted <= styled, f"emitted but unstyled: {sorted(emitted - styled)}"
+            assert styled <= emitted, f"styled but never emitted: {sorted(styled - emitted)}"
+            return f"{len(emitted)} token classes"
+
         @check("service worker never caches live server state")
         def _():
             worker = (WEB / "sw.js").read_text(encoding="utf-8")

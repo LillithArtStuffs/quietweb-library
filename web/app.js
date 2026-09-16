@@ -249,6 +249,149 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
 }
 
+/* ---------------------------------------------------- syntax highlighting */
+
+const PYTHON_KEYWORDS = "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield".split(" ");
+const PYTHON_BUILTINS = "True False None self print len range str int float bool list dict set tuple enumerate zip open super Exception".split(" ");
+
+const KEYWORDS = {
+  javascript: "async await break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return static super switch this throw try typeof var void while yield".split(" "),
+  python: PYTHON_KEYWORDS,
+  // Ren'Py is Python plus its own script and screen statements.
+  renpy: [...PYTHON_KEYWORDS, ..."label menu scene show hide play stop queue jump call screen transform image define init pause window voice nvl vbox hbox frame imagebutton textbutton".split(" ")],
+  css: [],
+  json: [],
+  html: []
+};
+
+const BUILTINS = {
+  javascript: "true false null undefined NaN Infinity console document window Math JSON Object Array String Number Boolean Promise Set Map Date RegExp localStorage fetch".split(" "),
+  python: PYTHON_BUILTINS,
+  renpy: [...PYTHON_BUILTINS, ..."renpy config store persistent style gui achievement".split(" ")],
+  css: [],
+  json: "true false null".split(" "),
+  html: []
+};
+
+// Each grammar is an ordered list of [token, pattern]; earlier entries win, so
+// comments and strings match before anything can look inside them.
+const GRAMMARS = {
+  javascript: [
+    ["comment", String.raw`//[^\n]*|/\*[\s\S]*?\*/`],
+    ["string", String.raw`\`(?:\\[\s\S]|[^\\\`])*\`|"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'`],
+    ["number", String.raw`\b0[xXbBoO][\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?\b`],
+    ["word", String.raw`[A-Za-z_$][\w$]*`],
+    ["punct", String.raw`[{}()\[\];,.:+\-*/%=<>!&|?~^]+`]
+  ],
+  python: [
+    ["comment", String.raw`#[^\n]*`],
+    ["string", String.raw`[rbfuRBFU]{0,2}(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*')`],
+    ["number", String.raw`\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?\b`],
+    ["word", String.raw`[A-Za-z_][\w]*`],
+    ["punct", String.raw`[{}()\[\];,.:+\-*/%=<>!&|?~^]+`]
+  ],
+  css: [
+    ["comment", String.raw`/\*[\s\S]*?\*/`],
+    ["string", String.raw`"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'`],
+    ["number", String.raw`#[\da-fA-F]{3,8}\b|\b\d*\.?\d+(?:px|em|rem|%|vh|vw|s|ms|deg|fr|ch)?\b`],
+    ["word", String.raw`@?[A-Za-z_-][\w-]*`],
+    ["punct", String.raw`[{}()\[\];,.:+\-*/%=<>!&|?~^]+`]
+  ],
+  json: [
+    ["string", String.raw`"(?:\\[\s\S]|[^"\\])*"`],
+    ["number", String.raw`-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b`],
+    ["word", String.raw`\b(?:true|false|null)\b`],
+    ["punct", String.raw`[{}()\[\];,.:+\-*/%=<>!&|?~^]+`]
+  ],
+  html: [
+    ["comment", String.raw`<!--[\s\S]*?-->`],
+    ["tag", String.raw`</?[A-Za-z][\w:-]*|/?>`],
+    ["string", String.raw`"[^"]*"|'[^']*'`],
+    ["attr", String.raw`[A-Za-z_:][\w:.-]*(?=\s*=)`],
+    ["punct", String.raw`[{}()\[\];,.:+\-*/%=<>!&|?~^]+`]
+  ]
+};
+GRAMMARS.renpy = GRAMMARS.python;
+
+const EXTENSION_LANGUAGES = {
+  js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript", ts: "javascript", tsx: "javascript",
+  py: "python", pyw: "python", rpy: "renpy",
+  css: "css", json: "json", webmanifest: "json",
+  html: "html", htm: "html", xml: "html", svg: "html", vue: "html"
+};
+
+function languageFromName(name) {
+  return EXTENSION_LANGUAGES[String(name).split(".").pop().toLowerCase()] || "";
+}
+
+function guessLanguage(text) {
+  const sample = String(text || "").slice(0, 4000);
+  if (!sample.trim()) return "plain";
+  if (/^\s*</.test(sample) && /<(!doctype|html|head|body|div|span|script|style|p|section)\b/i.test(sample)) return "html";
+  if (/^\s*[{[]/.test(sample)) { try { JSON.parse(text); return "json"; } catch (error) { /* not JSON after all */ } }
+  if (/^\s*(label\s+[\w.]+:|menu:|scene\s|show\s|init\s+python|define\s+\w+\s*=)/m.test(sample)) return "renpy";
+  if (/^\s*(def\s|class\s+\w+[(:]|import\s+\w|from\s+[\w.]+\s+import|if\s+__name__)/m.test(sample)) return "python";
+  if (/(^|[\s;{])(function\s|const\s|let\s|var\s|=>|require\(|export\s|import\s.+\sfrom\s)/.test(sample)) return "javascript";
+  if (/[.#@][\w-]+[^{}]*\{[^{}]*:[^{}]*[;}]/.test(sample)) return "css";
+  return "plain";
+}
+
+function languageFor(page) {
+  return page.language || languageFromName(page.title) || guessLanguage(page.content);
+}
+
+function tokenize(code, language) {
+  const grammar = GRAMMARS[language];
+  if (!grammar) return [["plain", code]];
+  const pattern = new RegExp(grammar.map(([name, source]) => `(?<${name}>${source})`).join("|"), "g");
+  const keywords = KEYWORDS[language] || [];
+  const builtins = BUILTINS[language] || [];
+  const tokens = [];
+  let cursor = 0;
+  let match;
+  while ((match = pattern.exec(code))) {
+    if (match.index > cursor) tokens.push(["plain", code.slice(cursor, match.index)]);
+    const name = Object.keys(match.groups).find((key) => match.groups[key] !== undefined);
+    const text = match[0];
+    let type = name;
+    if (name === "word") {
+      const next = code.slice(match.index + text.length).match(/^\s*(.)/)?.[1];
+      if (keywords.includes(text)) type = "keyword";
+      else if (builtins.includes(text)) type = "builtin";
+      else if (language === "css") type = text.startsWith("@") || next === ":" ? "keyword" : "plain";
+      else if (next === "(") type = "function";
+      else type = "plain";
+    }
+    tokens.push([type, text]);
+    cursor = match.index + text.length;
+    if (!text.length) pattern.lastIndex += 1;
+  }
+  if (cursor < code.length) tokens.push(["plain", code.slice(cursor)]);
+  return tokens;
+}
+
+const HIGHLIGHT_LIMIT = 200000;
+
+// Builds nodes rather than markup, so highlighted source can never become HTML.
+function renderCode(code, language) {
+  const fragment = document.createDocumentFragment();
+  if (code.length > HIGHLIGHT_LIMIT) {
+    fragment.append(document.createTextNode(code));
+    return fragment;
+  }
+  for (const [type, text] of tokenize(code, language)) {
+    if (type === "plain") {
+      fragment.append(document.createTextNode(text));
+      continue;
+    }
+    const span = document.createElement("span");
+    span.className = "syn-" + type;
+    span.textContent = text;
+    fragment.append(span);
+  }
+  return fragment;
+}
+
 /* ----------------------------------------------------------------- reader */
 
 function openReader(id) {
@@ -258,7 +401,8 @@ function openReader(id) {
   $("readerTag").textContent = page.tag;
   $("readerTitle").textContent = page.title;
   const edited = page.updated && page.updated !== page.created ? ` · edited ${formatDate(page.updated)}` : "";
-  $("readerMeta").textContent = `${typeLabel(page)} · saved ${formatDate(page.created)}${edited} · ${formatBytes(page.size || 0)}`;
+  const meta = $("readerMeta");
+  meta.textContent = `${typeLabel(page)} · saved ${formatDate(page.created)}${edited} · ${formatBytes(page.size || 0)}`;
 
   const body = $("readerBody");
   body.className = "reader-body";
@@ -269,9 +413,18 @@ function openReader(id) {
     frame.sandbox = "";
     frame.srcdoc = page.html;
     body.append(frame);
+  } else if (page.type === "code") {
+    const language = languageFor(page);
+    body.classList.add("code");
+    body.append(renderCode(page.content || "", language));
+    if (language !== "plain") {
+      const badge = document.createElement("span");
+      badge.className = "code-language";
+      badge.textContent = language;
+      meta.append(badge);
+    }
   } else {
     body.textContent = page.content || "This bookmark has no archived content yet.";
-    if (page.type === "code") body.classList.add("code");
   }
   if (page.url) {
     const source = document.createElement("a");
@@ -419,6 +572,7 @@ async function saveEntry() {
     const page = state.pages.find((item) => item.id === state.editingId);
     if (!page) throw new Error("That page is no longer in the library.");
     Object.assign(page, { title, tag, url, content, type, updated: new Date().toISOString() });
+    if (type === "code" && !page.language) page.language = guessLanguage(content);
     if (state.pendingSnapshot) { page.html = state.pendingSnapshot; page.type = "snapshot"; }
     page.size = sizeOf(page.content, page.html);
     await put(page);
@@ -832,8 +986,10 @@ function importFile(file) {
       const html = isHtml ? sanitizeHtml(raw) : "";
       const content = isHtml ? textFromDocument(new DOMParser().parseFromString(html, "text/html")) : raw.trim();
       if (!content && !html) throw new Error("That file is empty.");
-      const type = isHtml ? "snapshot" : /\.(js|ts|py|css|json|sh|rpy|java|c|cpp|rb|go|rs)$/i.test(file.name) ? "code" : "note";
+      const declared = languageFromName(file.name);
+      const type = isHtml ? "snapshot" : declared || /\.(sh|java|c|cpp|rb|go|rs|rpy|toml|yml|yaml)$/i.test(file.name) ? "code" : "note";
       const page = makePage(file.name.replace(/\.[^.]+$/, ""), "imported", content, type, "", html);
+      if (declared) page.language = declared;
       await put(page);
       state.pages.unshift(page);
       await syncToServer();

@@ -245,6 +245,100 @@ async function main() {
       return "status and tags responded";
     });
 
+    const saveCode = async (title, source) => {
+      await goToLibrary(page);
+      await page.click('[data-view="add"]');
+      await page.fill("#titleInput", title);
+      await page.fill("#tagInput", "code");
+      await page.selectOption("#typeInput", "code");
+      await page.fill("#contentInput", source);
+      await page.click("#saveEntryButton");
+      await page.waitForSelector("#libraryView.active");
+      await page.click(`.page-row:has(h3:text-is("${title}"))`);
+      await page.waitForSelector("#readerView.active");
+      return page.evaluate(() => {
+        const texts = (name) => [...document.querySelectorAll(`#readerBody .syn-${name}`)].map((n) => n.textContent);
+        return {
+          language: document.querySelector("#readerMeta .code-language")?.textContent || "",
+          comment: texts("comment"), string: texts("string"), number: texts("number"),
+          keyword: texts("keyword"), builtin: texts("builtin"), function: texts("function"),
+          body: document.querySelector("#readerBody").textContent,
+          elements: [...document.querySelectorAll("#readerBody *")].map((n) => n.tagName)
+        };
+      });
+    };
+
+    await check("javascript is highlighted", async () => {
+      const found = await saveCode("Smoke js", [
+        "// count the things",
+        "const total = 42;",
+        "function greet(name) {",
+        "  return `hello ${name}`;",
+        "}"
+      ].join("\n"));
+      if (found.language !== "javascript") throw new Error(`detected as "${found.language}"`);
+      if (!found.comment.some((t) => t.includes("count the things"))) throw new Error("comment not highlighted");
+      for (const word of ["const", "function", "return"]) {
+        if (!found.keyword.includes(word)) throw new Error(`"${word}" was not treated as a keyword`);
+      }
+      if (!found.number.includes("42")) throw new Error("number not highlighted");
+      if (!found.function.includes("greet")) throw new Error("function name not highlighted");
+      if (!found.string.some((t) => t.includes("hello"))) throw new Error("template literal not highlighted");
+      return `${found.keyword.length} keywords, ${found.string.length} strings`;
+    });
+
+    await check("ren'py is detected and highlighted", async () => {
+      const found = await saveCode("Smoke rpy", [
+        "label start:",
+        '    scene bg room',
+        '    e "Hello there."',
+        "    return"
+      ].join("\n"));
+      if (found.language !== "renpy") throw new Error(`detected as "${found.language}"`);
+      for (const word of ["label", "scene", "return"]) {
+        if (!found.keyword.includes(word)) throw new Error(`"${word}" was not treated as a keyword`);
+      }
+      if (!found.string.some((t) => t.includes("Hello there."))) throw new Error("dialogue string not highlighted");
+      return "label, scene and dialogue recognised";
+    });
+
+    await check("highlighted source cannot become markup", async () => {
+      const payload = '<img src=x onerror="alert(1)"> <script>alert(2)</scr' + 'ipt>';
+      const found = await saveCode("Smoke xss", payload);
+      if (found.elements.includes("IMG") || found.elements.includes("SCRIPT")) {
+        throw new Error(`the payload became real elements: ${found.elements.join(", ")}`);
+      }
+      if (!found.body.includes("onerror")) throw new Error("the source text was lost");
+      const stray = found.elements.filter((tag) => tag !== "SPAN");
+      if (stray.length) throw new Error(`unexpected elements: ${stray.join(", ")}`);
+      return "rendered as text in spans only";
+    });
+
+    await check("highlighting follows the theme", async () => {
+      // Sample a page that is known to contain all three token kinds.
+      await goToLibrary(page);
+      await page.click('.page-row:has(h3:text-is("Smoke js"))');
+      await page.waitForSelector("#readerBody .syn-comment");
+      const colours = {};
+      for (const theme of ["light", "dark", "teto", "wire"]) {
+        await page.selectOption("#themeSelect", theme);
+        await settleTransitions(page);
+        colours[theme] = await page.evaluate(() => {
+          const pick = (name) => {
+            const node = document.querySelector(`#readerBody .syn-${name}`);
+            return node ? getComputedStyle(node).color : "missing";
+          };
+          return [pick("string"), pick("comment"), pick("punct")].join(" | ");
+        });
+      }
+      if (Object.values(colours).some((value) => value.includes("missing"))) {
+        throw new Error("no highlighted tokens on screen to sample");
+      }
+      const distinct = new Set(Object.values(colours));
+      if (distinct.size !== 4) throw new Error(`only ${distinct.size} distinct syntax palettes`);
+      return "4 distinct syntax palettes";
+    });
+
     await check("every theme repaints every surface", async () => {
       await goToLibrary(page);
       const signatures = {};

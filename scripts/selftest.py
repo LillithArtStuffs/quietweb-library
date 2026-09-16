@@ -15,6 +15,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -642,12 +643,39 @@ def run():
         httpd.shutdown()
         httpd.server_close()
 
-    width = max(len(name) for _, name, _ in RESULTS)
-    for passed, name, detail in RESULTS:
-        print(f"{'PASS' if passed else 'FAIL'}  {name.ljust(width)}  {detail}")
-    failed = [name for passed, name, _ in RESULTS if not passed]
-    print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")
+    report()
+    failed = [entry for entry in RESULTS if not entry[0]]
     return 1 if failed else 0
+
+
+def report():
+    """Print the results, then repeat any failures so they are the last thing read.
+
+    On a phone the list is taller than the screen, so a count alone means
+    scrolling back through dozens of passing lines to find the one that matters.
+    """
+    width = max(len(name) for _, name, _ in RESULTS)
+    columns = shutil.get_terminal_size(fallback=(100, 24)).columns
+    roomy = width + 8 < columns
+
+    for passed, name, detail in RESULTS:
+        mark = "PASS" if passed else "FAIL"
+        if roomy:
+            print(f"{mark}  {name.ljust(width)}  {detail}")
+        else:
+            # Too narrow to align: give each result two clean lines instead of
+            # one that wraps mid-word.
+            print(f"{mark}  {name}")
+            print(f"      {detail}")
+
+    failed = [(name, detail) for passed, name, detail in RESULTS if not passed]
+    print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")
+    if not failed:
+        return
+    print(f"\n{len(failed)} failed:")
+    for name, detail in failed:
+        print(f"\n  {name}")
+        print(f"    {detail}")
 
 
 if __name__ == "__main__":

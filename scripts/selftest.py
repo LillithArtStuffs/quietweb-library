@@ -174,6 +174,24 @@ def run():
             assert styled <= emitted, f"styled but never emitted: {sorted(styled - emitted)}"
             return f"{len(emitted)} token classes"
 
+        @check("the theme editor exposes exactly the stylesheet's tokens")
+        def _():
+            css = (WEB / "styles.css").read_text(encoding="utf-8")
+            app = (WEB / "app.js").read_text(encoding="utf-8")
+            root = re.search(r":root \{(.*?)\n\}", css, re.S).group(1)
+            declared = set(re.findall(r"--([a-z-]+)\s*:", root))
+            groups = re.search(r"const TOKEN_GROUPS = \[(.*?)\n\];", app, re.S).group(1)
+            # Group labels are capitalised, so a lowercase match is always a token.
+            editable = re.findall(r'"([a-z][a-z-]*)"', groups)
+            duplicated = sorted({name for name in editable if editable.count(name) > 1})
+            assert not duplicated, f"the editor lists these twice: {duplicated}"
+            listed = set(editable)
+            missing = sorted(declared - listed)
+            extra = sorted(listed - declared)
+            assert not missing, f"the editor cannot reach: {missing}"
+            assert not extra, f"the editor offers tokens the stylesheet has no use for: {extra}"
+            return f"{len(declared)} tokens editable"
+
         @check("service worker never caches live server state")
         def _():
             worker = (WEB / "sw.js").read_text(encoding="utf-8")

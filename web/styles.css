@@ -360,6 +360,37 @@ main { width: min(1180px, calc(100% - 24px)); padding: 24px 0 36px; }
 .syn-punct { color: var(--syn-punct); }
 .code-language { display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font: 10px "Trebuchet MS", sans-serif; letter-spacing: .06em; text-transform: uppercase; }
 
+/* ---------------------------------------------------------- theme editor */
+
+.theme-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; padding: 16px 18px; }
+.theme-toolbar label { display: block; color: var(--muted); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.theme-toolbar select, .theme-toolbar input { display: block; margin-top: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 3px; outline: 0; color: var(--ink); background: var(--panel); font: 13px "Trebuchet MS", sans-serif; }
+.theme-toolbar input { min-width: 200px; }
+.theme-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+
+.contrast-report { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0 20px; }
+.contrast-chip { padding: 5px 10px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: var(--panel); font: 11px "Trebuchet MS", sans-serif; }
+.contrast-chip.pass { color: var(--green); border-color: var(--badge-line); background: var(--badge-bg); }
+.contrast-chip.warn { color: var(--status-warn); border-color: var(--status-warn); }
+.contrast-chip.fail { color: var(--on-accent); border-color: var(--status-bad); background: var(--status-bad); }
+
+.token-editor { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.token-group { margin: 0; padding: 14px 16px 16px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+.token-group legend { padding: 0 7px; color: var(--coral-dark); font: 700 10px "Trebuchet MS", sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+.token-row { display: grid; grid-template-columns: 1fr 34px 132px; gap: 9px; align-items: center; margin-top: 8px; color: var(--muted); font: 11px Consolas, "Courier New", monospace; }
+.token-row input[type="text"] { min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 3px; outline: 0; color: var(--ink); background: var(--panel); font: 11px Consolas, "Courier New", monospace; }
+.token-row input[type="color"] { width: 34px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: 3px; background: var(--panel); cursor: pointer; }
+.token-swatch { display: block; width: 34px; height: 30px; border: 1px solid var(--line); border-radius: 3px; }
+.token-row input:focus { border-color: var(--coral); }
+
+@media (max-width: 760px) {
+  .theme-actions { margin-left: 0; }
+  .theme-toolbar input { min-width: 0; width: 100%; }
+  .token-editor { grid-template-columns: 1fr; }
+  .token-row { grid-template-columns: 1fr 44px 110px; }
+  .token-row input[type="color"], .token-swatch { width: 44px; height: 40px; }
+}
+
 /* --------------------------------------------------- build 0.4 additions */
 
 /* Several panels are toggled with the hidden attribute, whose UA display:none

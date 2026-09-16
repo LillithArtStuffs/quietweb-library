@@ -24,7 +24,7 @@
     <div class="header-actions">
       <span id="connectionState" class="connection"><i></i> Checking server...</span>
       <label class="theme-picker"><span>Theme</span><select id="themeSelect" aria-label="Choose theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option><option value="teto">Teto SV</option><option value="wire">Nightwire</option></select></label>
-      <button class="button header-button" data-view="diagnostics">Diagnostics</button>
+      <button id="editThemeButton" class="button header-button" type="button" title="Theme editor">Theme editor</button><button class="button header-button" data-view="diagnostics">Diagnostics</button>
       <button id="installButton" class="button subtle" hidden>Install app</button>
     </div>
   </header>
@@ -115,6 +115,34 @@
       </section>
     </section>
 
+    <section id="themesView" class="view" aria-labelledby="themesHeading">
+      <div class="view-intro compact">
+        <div>
+          <p class="kicker">Theme editor</p>
+          <h1 id="themesHeading">Make it yours.</h1>
+          <p class="lede">Start from a built-in theme, change any of the 49 colours, and watch the whole app repaint as you type.</p>
+        </div>
+        <button class="button subtle" data-view="library">Back to library</button>
+      </div>
+
+      <div class="theme-toolbar panel">
+        <label>Start from<select id="themeBase"><option value="dark">Dark</option><option value="light">Light</option><option value="teto">Teto SV</option><option value="wire">Nightwire</option></select></label>
+        <label>Name<input id="themeName" maxlength="40" placeholder="Teto, properly" autocomplete="off"></label>
+        <div class="theme-actions">
+          <button id="saveThemeButton" class="button accent" type="button">Save</button>
+          <button id="resetThemeButton" class="button subtle" type="button">Revert</button>
+          <button id="exportThemeButton" class="button subtle" type="button">Export</button>
+          <button id="importThemeButton" class="button subtle" type="button">Import</button>
+          <button id="copyThemeCssButton" class="button subtle" type="button">Copy CSS</button>
+          <button id="deleteThemeButton" class="button subtle danger" type="button">Delete</button>
+          <input id="themeFileInput" type="file" accept="application/json,.json" hidden>
+        </div>
+      </div>
+      <p id="themeStatus" class="form-status" role="status"></p>
+      <div id="contrastReport" class="contrast-report" aria-label="Readability of the current palette"></div>
+      <div id="tokenEditor" class="token-editor"></div>
+    </section>
+
     <section class="console" aria-label="Quietweb activity console">
       <div class="console-head"><strong>Activity console</strong><span id="consoleMode">live app readout · safe commands only</span></div>
       <pre id="consoleOutput">Quietweb activity console ready. Type help for commands.</pre>
@@ -128,6 +156,7 @@
       <dt>/</dt><dd>Search</dd>
       <dt>n</dt><dd>New entry</dd>
       <dt>e</dt><dd>Edit the open page</dd>
+      <dt>t</dt><dd>Theme editor</dd>
       <dt>d</dt><dd>Diagnostics</dd>
       <dt>Esc</dt><dd>Back to library</dd>
       <dt>?</dt><dd>Toggle this panel</dd>

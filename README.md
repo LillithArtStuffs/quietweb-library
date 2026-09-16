@@ -47,15 +47,24 @@ The host server owns the shared library at `server_data/library.json`. Enter the
 
 ## Themes
 
-Four themes ship: **Light**, **Dark**, **Teto SV** (crimson on warm black), and **Nightwire** (near-black with an acid-green accent). **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
+Four themes ship: **Light**, **Dark**, **Teto SV**, and **Nightwire**. **System** follows the OS light/dark setting and keeps following it if the OS flips while the app is open. The choice is remembered per device, and `theme <name>` works in the console.
 
-Every colour the app paints comes from a custom property — 49 tokens, including a full syntax palette. A theme is one block of tokens in `web/styles.css` and nothing else; there are no per-theme rules anywhere in the stylesheet. To add one:
+Every colour the app paints comes from a custom property — 49 tokens, including a full syntax palette. A theme is one block of tokens in `web/styles.css` and nothing else; there are no per-theme rules anywhere in the stylesheet.
 
-1. Copy an existing `html[data-theme="..."]` block in `web/styles.css` and change the values.
-2. Add the name to `THEMES` and `THEME_COLORS` in `web/app.js`.
-3. Add an `<option>` to `#themeSelect` in `web/index.html`.
+### The theme editor
 
-`scripts/selftest.py` then fails the build if the new theme leaves any token undefined, if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite additionally checks that each theme repaints every surface, that syntax colours change with it, and that no theme drops a text/background pair below a 3:1 contrast ratio.
+**Theme editor** in the header (or press `t`) opens a live editor for all 49 tokens, grouped by what they affect. Typing a colour repaints the whole app immediately, so you are always looking at the real thing rather than a swatch.
+
+- **Start from** any built-in theme, then change what you want.
+- **Readability** chips across the top show the contrast ratio for the pairs that matter — body text, header text, code, syntax. Under 4.5:1 warns, under 3:1 fails, so a theme cannot quietly become unreadable.
+- **Save** puts it in the picker under *Yours*. Saved themes persist on the device and are chosen like any built-in.
+- **Export** / **Import** move a theme between devices as JSON. An import takes any token the file omits from its base theme.
+- **Copy CSS** produces a finished `html[data-theme="..."]` block. Paste it into `web/styles.css`, add the name to `THEMES` and `THEME_COLORS` in `web/app.js` and an `<option>` to `#themeSelect`, and it becomes a built-in.
+- **Delete** is undoable from the toast.
+
+Leaving the editor without saving reverts the preview.
+
+`scripts/selftest.py` fails the build if a theme leaves any token undefined, if the editor cannot reach a token the stylesheet declares (or offers one it does not), if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite checks that each theme repaints every surface, that syntax colours change with it, that a saved theme survives a reload, that switching back to a built-in drops the custom values, and that no theme drops a sampled text/background pair below 3:1.
 
 ## Syntax highlighting
 

@@ -3,7 +3,7 @@ const DB_VERSION = 1;
 const STORE = "pages";
 const BUILD = "0.4";
 const TOMBSTONE_KEY = "quietweb-tombstones";
-const VIEWS = ["library", "add", "reader", "diagnostics"];
+const VIEWS = ["library", "add", "reader", "diagnostics", "themes"];
 const THEMES = ["dark", "light", "teto", "wire"];
 const THEME_OPTIONS = [...THEMES, "system"];
 const THEME_COLORS = { dark: "#0d2d38", light: "#173d48", teto: "#5d315f", wire: "#0a1114" };
@@ -84,6 +84,8 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === name + "View"));
   if (name === "library") renderList();
   if (name !== "add") exitEditMode();
+  if (name === "themes") startDraft(localStorage.getItem("quietweb-theme")?.replace(CUSTOM_PREFIX, "") || "dark");
+  else if (draft.dirty) { applyTheme(localStorage.getItem("quietweb-theme") || "dark"); draft.dirty = false; }
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -247,6 +249,279 @@ function formatBytes(bytes) {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
+}
+
+/* ------------------------------------------------------- theme authoring */
+
+// The editable surface of a theme. Every token in the stylesheet appears here
+// exactly once; scripts/selftest.py fails the build if the two ever drift.
+const TOKEN_GROUPS = [
+  ["Page", ["paper", "panel", "surface", "row", "row-hover", "glow", "shadow"]],
+  ["Text", ["ink", "muted", "on-surface", "on-accent"]],
+  ["Lines", ["line", "line-strong", "dashed", "drop-hover"]],
+  ["Header", ["blue", "blue-soft", "on-brand", "on-brand-dim", "on-brand-line"]],
+  ["Accent", ["coral", "coral-dark", "green"]],
+  ["Status", ["status-ok", "status-warn", "status-bad", "status-idle", "badge-bg", "badge-line"]],
+  ["Notices", ["notice-bg", "notice-ink", "notice-line", "toast-bg", "toast-line", "toast-ink"]],
+  ["Console", ["console-bg", "console-line", "console-ink", "console-dim", "console-accent"]],
+  ["Code", ["code-bg", "code-ink"]],
+  ["Syntax", ["syn-comment", "syn-string", "syn-number", "syn-keyword", "syn-builtin", "syn-function", "syn-punct"]]
+];
+const THEME_TOKENS = TOKEN_GROUPS.flatMap(([, tokens]) => tokens);
+const CUSTOM_KEY = "quietweb-custom-themes";
+const CUSTOM_PREFIX = "custom:";
+
+// Pairs worth watching while editing: foreground against what sits behind it.
+const CONTRAST_PAIRS = [
+  ["Body text", "ink", "paper"],
+  ["Secondary text", "muted", "panel"],
+  ["Header text", "on-brand", "blue"],
+  ["Accent button", "on-accent", "coral"],
+  ["Code", "code-ink", "code-bg"],
+  ["Strings", "syn-string", "code-bg"],
+  ["Comments", "syn-comment", "code-bg"]
+];
+
+function readCustomThemes() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CUSTOM_KEY) || "{}");
+    return stored && typeof stored === "object" ? stored : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeCustomThemes(themes) {
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(themes));
+    return true;
+  } catch (error) {
+    showToast("No room left to save themes on this device.");
+    return false;
+  }
+}
+
+// Reads a built-in theme's values straight out of the stylesheet, so the editor
+// never keeps a second copy of the palettes.
+function tokensOfBuiltIn(name) {
+  // The palettes are selected as html[data-theme], so they can only be read off
+  // the root element. Borrow it, read, and put it back before anything paints.
+  const root = document.documentElement;
+  const previousTheme = root.dataset.theme;
+  const previousStyle = root.getAttribute("style");
+  clearCustomTokens();
+  root.dataset.theme = THEMES.includes(name) ? name : "dark";
+  const styles = getComputedStyle(root);
+  const tokens = {};
+  THEME_TOKENS.forEach((token) => { tokens[token] = styles.getPropertyValue("--" + token).trim(); });
+  root.dataset.theme = previousTheme;
+  if (previousStyle === null) root.removeAttribute("style");
+  else root.setAttribute("style", previousStyle);
+  return tokens;
+}
+
+function clearCustomTokens() {
+  THEME_TOKENS.forEach((token) => document.documentElement.style.removeProperty("--" + token));
+}
+
+function paintCustomTokens(tokens) {
+  THEME_TOKENS.forEach((token) => {
+    if (tokens[token]) document.documentElement.style.setProperty("--" + token, tokens[token]);
+  });
+}
+
+/* --------------------------------------------------------- the editor view */
+
+const draft = { name: "", base: "dark", tokens: {}, dirty: false };
+
+function startDraft(source) {
+  const custom = readCustomThemes();
+  if (source && custom[source]) {
+    draft.name = source;
+    draft.base = custom[source].base || "dark";
+    draft.tokens = { ...custom[source].tokens };
+  } else {
+    const base = THEMES.includes(source) ? source : document.documentElement.dataset.theme;
+    draft.name = "";
+    draft.base = base;
+    draft.tokens = tokensOfBuiltIn(base);
+  }
+  draft.dirty = false;
+  $("themeName").value = draft.name;
+  $("themeBase").value = draft.base;
+  renderTokenEditor();
+  previewDraft();
+}
+
+function previewDraft() {
+  document.documentElement.dataset.theme = draft.base;
+  paintCustomTokens(draft.tokens);
+  renderContrast();
+}
+
+function renderTokenEditor() {
+  $("tokenEditor").innerHTML = TOKEN_GROUPS.map(([label, tokens]) => `
+    <fieldset class="token-group">
+      <legend>${escapeHtml(label)}</legend>
+      ${tokens.map((token) => {
+        const value = draft.tokens[token] || "";
+        const swatch = /^#[0-9a-fA-F]{6}$/.test(value)
+          ? `<input type="color" value="${escapeHtml(value)}" data-swatch="${escapeHtml(token)}" aria-label="${escapeHtml(token)} colour">`
+          : `<span class="token-swatch" style="background:${escapeHtml(value)}"></span>`;
+        return `<label class="token-row"><span>${escapeHtml(token)}</span>${swatch}<input type="text" value="${escapeHtml(value)}" data-token="${escapeHtml(token)}" spellcheck="false" autocapitalize="off"></label>`;
+      }).join("")}
+    </fieldset>`).join("");
+
+  $("tokenEditor").querySelectorAll("[data-token]").forEach((input) => {
+    input.addEventListener("input", () => setToken(input.dataset.token, input.value, "text"));
+  });
+  $("tokenEditor").querySelectorAll("[data-swatch]").forEach((input) => {
+    input.addEventListener("input", () => setToken(input.dataset.swatch, input.value, "swatch"));
+  });
+}
+
+function setToken(token, value, origin) {
+  draft.tokens[token] = value;
+  draft.dirty = true;
+  document.documentElement.style.setProperty("--" + token, value);
+  const editor = $("tokenEditor");
+  if (origin === "swatch") {
+    const text = editor.querySelector(`[data-token="${token}"]`);
+    if (text) text.value = value;
+  } else {
+    const swatch = editor.querySelector(`[data-swatch="${token}"]`);
+    if (swatch && /^#[0-9a-fA-F]{6}$/.test(value)) swatch.value = value;
+  }
+  renderContrast();
+}
+
+/* Contrast, so a theme cannot be saved unreadable without saying so. */
+
+function parseColour(value) {
+  const probe = document.createElement("span");
+  probe.style.color = value;
+  document.body.append(probe);
+  const resolved = getComputedStyle(probe).color;
+  probe.remove();
+  const parts = (resolved.match(/[\d.]+/g) || []).map(Number);
+  return parts.length >= 3 ? parts : null;
+}
+
+function relativeLuminance([red, green, blue]) {
+  const channel = (value) => {
+    const ratio = value / 255;
+    return ratio <= 0.03928 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+}
+
+function contrastRatio(foreground, background) {
+  const front = parseColour(foreground);
+  const back = parseColour(background);
+  if (!front || !back) return null;
+  const blended = front.length > 3
+    ? [0, 1, 2].map((index) => front[index] * front[3] + back[index] * (1 - front[3]))
+    : front;
+  const [bright, dim] = [relativeLuminance(blended), relativeLuminance(back)].sort((a, b) => b - a);
+  return (bright + 0.05) / (dim + 0.05);
+}
+
+function renderContrast() {
+  $("contrastReport").innerHTML = CONTRAST_PAIRS.map(([label, foreground, background]) => {
+    const ratio = contrastRatio(draft.tokens[foreground], draft.tokens[background]);
+    if (ratio === null) return `<span class="contrast-chip warn">${escapeHtml(label)} ?</span>`;
+    const rank = ratio >= 4.5 ? "pass" : ratio >= 3 ? "warn" : "fail";
+    return `<span class="contrast-chip ${rank}">${escapeHtml(label)} ${ratio.toFixed(1)}:1</span>`;
+  }).join("");
+}
+
+/* ------------------------------------------------------------- persistence */
+
+function saveDraft() {
+  const name = $("themeName").value.trim().slice(0, 40);
+  if (!name) throw new Error("Give the theme a name first.");
+  if (THEME_OPTIONS.includes(name.toLowerCase())) throw new Error(`"${name}" is the name of a built-in theme.`);
+  const themes = readCustomThemes();
+  themes[name] = { base: draft.base, tokens: { ...draft.tokens }, updated: new Date().toISOString() };
+  if (!writeCustomThemes(themes)) return;
+  draft.name = name;
+  draft.dirty = false;
+  refreshThemePicker();
+  applyTheme(CUSTOM_PREFIX + name);
+  showToast(`Saved the "${name}" theme.`);
+  logEvent(`theme saved · ${name}`);
+}
+
+function deleteDraft() {
+  const name = draft.name;
+  if (!name) throw new Error("This theme has not been saved yet.");
+  const themes = readCustomThemes();
+  const removed = themes[name];
+  delete themes[name];
+  writeCustomThemes(themes);
+  refreshThemePicker();
+  applyTheme(draft.base);
+  startDraft(draft.base);
+  showToast(`Deleted "${name}".`, { label: "Undo", action: () => {
+    const restored = readCustomThemes();
+    restored[name] = removed;
+    writeCustomThemes(restored);
+    refreshThemePicker();
+    applyTheme(CUSTOM_PREFIX + name);
+  } });
+  logEvent(`theme deleted · ${name}`);
+}
+
+function draftAsCss() {
+  const slug = (draft.name || "custom").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "custom";
+  const body = THEME_TOKENS.map((token) => `  --${token}: ${draft.tokens[token]};`).join("\n");
+  return `html[data-theme="${slug}"] {\n${body}\n}\n`;
+}
+
+function exportDraft() {
+  const payload = { quietwebTheme: 1, name: draft.name || "untitled", base: draft.base, tokens: draft.tokens };
+  saveBlob(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), `quietweb-theme-${slug(draft.name || "untitled")}.json`);
+  showToast("Theme exported.");
+}
+
+function importThemeFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(String(reader.result));
+      const tokens = payload.tokens;
+      if (!tokens || typeof tokens !== "object") throw new Error("That is not a Quietweb theme file.");
+      const missing = THEME_TOKENS.filter((token) => !tokens[token]);
+      draft.name = String(payload.name || "imported").slice(0, 40);
+      draft.base = THEMES.includes(payload.base) ? payload.base : "dark";
+      // Anything the file leaves out falls back to the base theme's value.
+      draft.tokens = { ...tokensOfBuiltIn(draft.base), ...tokens };
+      draft.dirty = true;
+      $("themeName").value = draft.name;
+      $("themeBase").value = draft.base;
+      renderTokenEditor();
+      previewDraft();
+      showToast(missing.length ? `Imported, ${missing.length} tokens taken from ${draft.base}.` : "Theme imported.");
+    } catch (error) {
+      showToast(error.message || "Could not read that theme file.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function refreshThemePicker() {
+  const select = $("themeSelect");
+  const current = select.value;
+  const custom = readCustomThemes();
+  const builtIn = [["system", "System"], ["dark", "Dark"], ["light", "Light"], ["teto", "Teto SV"], ["wire", "Nightwire"]];
+  select.innerHTML = builtIn.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")
+    + (Object.keys(custom).length
+      ? `<optgroup label="Yours">${Object.keys(custom).sort().map((name) =>
+          `<option value="${escapeHtml(CUSTOM_PREFIX + name)}">${escapeHtml(name)}</option>`).join("")}</optgroup>`
+      : "");
+  select.value = current;
+  if (!select.value) select.value = localStorage.getItem("quietweb-theme") || "dark";
 }
 
 /* ---------------------------------------------------- syntax highlighting */
@@ -744,7 +1019,24 @@ function showToast(message, action) {
 // The stored value is the *preference*, which may be "system"; data-theme is
 // always a concrete theme so the stylesheet never has to resolve anything.
 function applyTheme(preference) {
-  const chosen = THEME_OPTIONS.includes(preference) ? preference : "dark";
+  const custom = readCustomThemes();
+  const customName = String(preference || "").startsWith(CUSTOM_PREFIX) ? preference.slice(CUSTOM_PREFIX.length) : "";
+  const chosen = customName && custom[customName] ? preference : THEME_OPTIONS.includes(preference) ? preference : "dark";
+
+  if (customName && custom[customName]) {
+    const theme = custom[customName];
+    const base = THEMES.includes(theme.base) ? theme.base : "dark";
+    document.documentElement.dataset.theme = base;
+    paintCustomTokens(theme.tokens || {});
+    if ($("themeSelect")) $("themeSelect").value = chosen;
+    const tint = document.querySelector('meta[name="theme-color"]');
+    if (tint) tint.content = (theme.tokens || {}).blue || THEME_COLORS[base];
+    localStorage.setItem("quietweb-theme", chosen);
+    return base;
+  }
+
+  // A built-in theme must not inherit leftovers from a custom one.
+  clearCustomTokens();
   const resolved = chosen === "system" ? (matchMedia(LIGHT_QUERY).matches ? "light" : "dark") : chosen;
   document.documentElement.dataset.theme = resolved;
   if ($("themeSelect")) $("themeSelect").value = chosen;
@@ -939,10 +1231,13 @@ const CONSOLE_COMMANDS = {
   export: () => { exportLibrary(); writeConsole("export started"); },
   clear: () => { $("consoleOutput").textContent = "Console cleared."; },
   theme: (argument) => {
-    const options = THEME_OPTIONS.join(", ");
-    if (!argument) return writeConsole(`theme: ${document.documentElement.dataset.theme} · options: ${options}`);
-    const wanted = argument.trim().toLowerCase();
-    if (!THEME_OPTIONS.includes(wanted)) return writeConsole(`unknown theme "${wanted}" · options: ${options}`);
+    const mine = Object.keys(readCustomThemes());
+    const options = [...THEME_OPTIONS, ...mine].join(", ");
+    if (!argument) return writeConsole(`theme: ${localStorage.getItem("quietweb-theme")} · options: ${options}`);
+    const asked = argument.trim();
+    const match = mine.find((name) => name.toLowerCase() === asked.toLowerCase());
+    const wanted = match ? CUSTOM_PREFIX + match : asked.toLowerCase();
+    if (!match && !THEME_OPTIONS.includes(wanted)) return writeConsole(`unknown theme "${asked}" · options: ${options}`);
     const resolved = applyTheme(wanted);
     writeConsole(wanted === "system" ? `following the system theme · now ${resolved}` : `theme set to ${resolved}`);
   },
@@ -1046,6 +1341,7 @@ function handleShortcut(event) {
   if (event.key === "/") { event.preventDefault(); $("searchInput").focus(); $("searchInput").select(); return; }
   if (event.key === "n") { event.preventDefault(); showView("add"); $("titleInput").focus(); return; }
   if (event.key === "d") { event.preventDefault(); showView("diagnostics"); return; }
+  if (event.key === "t") { event.preventDefault(); showView("themes"); return; }
   if (event.key === "e" && activeView === "reader" && state.selectedId) {
     event.preventDefault();
     const page = state.pages.find((item) => item.id === state.selectedId);
@@ -1156,6 +1452,28 @@ function bindEvents() {
     await state.deferredInstall.userChoice;
     state.deferredInstall = null;
     $("installButton").hidden = true;
+  });
+
+  refreshThemePicker();
+  $("themeSelect").value = localStorage.getItem("quietweb-theme") || "dark";
+  $("editThemeButton").addEventListener("click", () => showView("themes"));
+  $("themeBase").addEventListener("change", (event) => {
+    draft.base = event.target.value;
+    draft.tokens = tokensOfBuiltIn(draft.base);
+    renderTokenEditor();
+    previewDraft();
+  });
+  $("themeName").addEventListener("input", () => { draft.dirty = true; });
+  $("saveThemeButton").addEventListener("click", () => { try { saveDraft(); } catch (error) { $("themeStatus").textContent = error.message; } });
+  $("deleteThemeButton").addEventListener("click", () => { try { deleteDraft(); $("themeStatus").textContent = ""; } catch (error) { $("themeStatus").textContent = error.message; } });
+  $("resetThemeButton").addEventListener("click", () => { startDraft(draft.name || draft.base); $("themeStatus").textContent = "Reverted to the last saved values."; });
+  $("exportThemeButton").addEventListener("click", exportDraft);
+  $("importThemeButton").addEventListener("click", () => $("themeFileInput").click());
+  $("themeFileInput").addEventListener("change", (event) => { importThemeFile(event.target.files[0]); event.target.value = ""; });
+  $("copyThemeCssButton").addEventListener("click", async () => {
+    const css = draftAsCss();
+    try { await navigator.clipboard.writeText(css); $("themeStatus").textContent = "CSS copied. Paste it into web/styles.css to make it a built-in."; }
+    catch (error) { $("themeStatus").textContent = css; }
   });
 
   refreshServerStatus();

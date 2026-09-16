@@ -13,6 +13,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -421,6 +422,96 @@ async function main() {
       if (theme !== "teto") throw new Error(`theme came back as ${theme}`);
       await page.selectOption("#themeSelect", "dark");
       return "teto survived a reload";
+    });
+
+    await check("the theme editor edits live and saves", async () => {
+      await goToLibrary(page);
+      await page.click("#editThemeButton");
+      await page.waitForSelector("#themesView.active");
+      const rows = await page.locator(".token-row").count();
+      if (rows !== 49) throw new Error(`the editor shows ${rows} tokens, expected 49`);
+
+      await page.selectOption("#themeBase", "dark");
+      await page.fill('[data-token="paper"]', "#2b0d12");
+      await page.fill('[data-token="coral"]', "#e8102a");
+      await settleTransitions(page);
+      const live = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      if (live !== "rgb(43, 13, 18)") throw new Error(`the page did not repaint live, body is ${live}`);
+
+      await page.fill("#themeName", "Smoke theme");
+      await page.click("#saveThemeButton");
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("#themeSelect option")].some((o) => o.value === "custom:Smoke theme"));
+      const picked = await page.inputValue("#themeSelect");
+      if (picked !== "custom:Smoke theme") throw new Error(`the picker shows "${picked}" after saving`);
+      return `${rows} tokens, saved and selected`;
+    });
+
+    await check("a custom theme survives a reload", async () => {
+      await page.reload({ waitUntil: "networkidle" });
+      const [preference, paper] = await page.evaluate(() => [
+        localStorage.getItem("quietweb-theme"),
+        getComputedStyle(document.body).backgroundColor
+      ]);
+      if (preference !== "custom:Smoke theme") throw new Error(`preference came back as "${preference}"`);
+      if (paper !== "rgb(43, 13, 18)") throw new Error(`the custom paper did not survive, body is ${paper}`);
+      return "preference and palette both restored";
+    });
+
+    await check("switching back to a built-in drops the custom values", async () => {
+      await page.selectOption("#themeSelect", "dark");
+      await settleTransitions(page);
+      const [paper, inline] = await page.evaluate(() => [
+        getComputedStyle(document.body).backgroundColor,
+        document.documentElement.getAttribute("style") || ""
+      ]);
+      if (paper === "rgb(43, 13, 18)") throw new Error("the custom paper leaked into the dark theme");
+      if (inline.includes("--paper")) throw new Error(`inline overrides were left behind: ${inline}`);
+      return "custom tokens cleared";
+    });
+
+    await check("the editor reports unreadable palettes", async () => {
+      await goToLibrary(page);
+      await page.click("#editThemeButton");
+      await page.waitForSelector("#themesView.active");
+      await page.selectOption("#themeBase", "light");
+      await page.waitForSelector(".contrast-chip");
+      const healthy = await page.locator(".contrast-chip.fail").count();
+      if (healthy) throw new Error("the light theme was reported as unreadable");
+      // Body text the same colour as the page it sits on must be called out.
+      await page.fill('[data-token="ink"]', "#f3f0e8");
+      await page.waitForFunction(() => document.querySelectorAll(".contrast-chip.fail").length > 0);
+      const failing = await page.locator(".contrast-chip.fail").first().innerText();
+      if (!/body text/i.test(failing)) throw new Error(`flagged the wrong pair: ${failing}`);
+      return `caught it: ${failing}`;
+    });
+
+    await check("a theme exports and its CSS is complete", async () => {
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.click("#exportThemeButton")
+      ]);
+      const name = download.suggestedFilename();
+      if (!name.startsWith("quietweb-theme-")) throw new Error(`downloaded ${name}`);
+      const payload = JSON.parse(await readFile(await download.path(), "utf8"));
+      const exported = Object.keys(payload.tokens || {});
+      if (exported.length !== 49) throw new Error(`the export carries ${exported.length} tokens`);
+      if (!payload.base) throw new Error("the export does not record a base theme");
+      return `${name} with ${exported.length} tokens`;
+    });
+
+    await check("a saved theme can be deleted and undone", async () => {
+      await page.selectOption("#themeSelect", "custom:Smoke theme");
+      await goToLibrary(page);
+      await page.click("#editThemeButton");
+      await page.waitForSelector("#themesView.active");
+      await page.click("#deleteThemeButton");
+      await page.waitForFunction(() =>
+        ![...document.querySelectorAll("#themeSelect option")].some((o) => o.value === "custom:Smoke theme"));
+      await page.click(".toast-action");
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("#themeSelect option")].some((o) => o.value === "custom:Smoke theme"));
+      return "deleted, then restored from the toast";
     });
 
     await check("the library exports as JSON", async () => {

@@ -287,6 +287,141 @@ def run():
                 assert response.headers.get("X-Content-Type-Options") == "nosniff", "missing nosniff"
                 assert response.headers.get("Cache-Control") == "no-store", "api responses are cacheable"
             return "nosniff and no-store set"
+        # ---- live browsing proxy -------------------------------------------
+        import functools
+        import http.server
+        import socketserver
+        import browse
+
+        site_handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                         directory=str(ROOT / "scripts" / "browser" / "fixture" / "site"))
+        site = socketserver.TCPServer(("127.0.0.1", 0), site_handler)
+        site.daemon_threads = True
+        Thread(target=site.serve_forever, daemon=True).start()
+        site_base = f"http://127.0.0.1:{site.server_address[1]}"
+        origin = offline_server.ALLOW_PRIVATE_FETCH
+        offline_server.ALLOW_PRIVATE_FETCH = True  # the fixture lives on loopback
+
+        def proxy_path(url):
+            return browse.PREFIX + browse.encode_target(url)
+
+        try:
+            @check("the proxy refuses private targets by default")
+            def _():
+                offline_server.ALLOW_PRIVATE_FETCH = False
+                try:
+                    _, payload, _ = request(base, proxy_path(site_base + "/index.html"), expect=502)
+                    assert b"private or local address" in payload, payload[:200]
+                finally:
+                    offline_server.ALLOW_PRIVATE_FETCH = True
+                return "refused a loopback target"
+
+            @check("the proxy rewrites every address back through itself")
+            def _():
+                _, payload, content_type = request(base, proxy_path(site_base + "/index.html"))
+                page = payload.decode("utf-8")
+                assert content_type == "text/html", content_type
+                # The address bar shows the real URL on purpose, so check the
+                # document below it: nothing there may still point at the origin.
+                document = page.split(">Library</a></div>", 1)[-1]
+                assert site_base not in document, "an un-rewritten absolute URL to the origin survived"
+                for marker, target in [
+                    ("relative link", site_base + "/about.html"),
+                    ("root-relative link", site_base + "/sub/deep.html"),
+                    ("absolute link", "https://example.com/outside"),
+                    ("relative image", site_base + "/pic.png"),
+                    ("stylesheet", site_base + "/style.css"),
+                ]:
+                    assert proxy_path(target) in page, f"{marker} was not rewritten ({target})"
+                return "links, images and stylesheet all routed through /p/"
+
+            @check("the proxy leaves addresses it should not touch alone")
+            def _():
+                page = request(base, proxy_path(site_base + "/index.html"))[1].decode("utf-8")
+                assert 'href="#section"' in page, "an in-page anchor was rewritten"
+                assert 'href="mailto:someone@example.com"' in page, "a mailto: was rewritten"
+                assert "data:image/gif" in request(base, proxy_path(site_base + "/style.css"))[1].decode("utf-8")
+                return "anchors, mailto: and data: left as they were"
+
+            @check("relative addresses resolve against the real page, not the proxy")
+            def _():
+                page = request(base, proxy_path(site_base + "/sub/deep.html"))[1].decode("utf-8")
+                # ../pic.png from /sub/ is /pic.png, not /sub/pic.png.
+                assert proxy_path(site_base + "/pic.png") in page, "../pic.png resolved wrongly"
+                assert proxy_path(site_base + "/style.css") in page, "../style.css resolved wrongly"
+                assert proxy_path(site_base + "/sub/pic.png") not in page, "resolved against the wrong directory"
+                return "../ resolved against the source directory"
+
+            @check("stylesheets are rewritten too")
+            def _():
+                _, payload, content_type = request(base, proxy_path(site_base + "/style.css"))
+                sheet = payload.decode("utf-8")
+                assert content_type == "text/css", content_type
+                assert proxy_path(site_base + "/pic.png") in sheet, "url() was not rewritten"
+                assert proxy_path(site_base + "/theme.css") in sheet, "@import was not rewritten"
+                return "url() and @import both routed"
+
+            @check("binary responses pass through untouched")
+            def _():
+                _, payload, content_type = request(base, proxy_path(site_base + "/pic.png"))
+                assert content_type == "image/png", content_type
+                original = (ROOT / "scripts" / "browser" / "fixture" / "site" / "pic.png").read_bytes()
+                assert payload == original, f"{len(payload)} bytes back, {len(original)} expected"
+                return f"{len(payload)} bytes identical"
+
+            @check("srcset candidates keep their descriptors")
+            def _():
+                page = request(base, proxy_path(site_base + "/index.html"))[1].decode("utf-8")
+                assert f'srcset="{proxy_path(site_base + "/pic.png")} 1x, {proxy_path(site_base + "/pic.png")} 2x"' in page, \
+                    "srcset was not rewritten with its descriptors intact"
+                return "1x and 2x preserved"
+
+            @check("scripts are kept by default and removed on request")
+            def _():
+                page = request(base, proxy_path(site_base + "/index.html"))[1].decode("utf-8")
+                assert proxy_path(site_base + "/app.js") in page, "the script was dropped by default"
+                assert "integrity=" not in page, "an integrity attribute survived, which would block the proxied file"
+                assert "crossorigin=" not in page, "a crossorigin attribute survived"
+                offline_server.KEEP_SCRIPTS = False
+                try:
+                    stripped = request(base, proxy_path(site_base + "/index.html"))[1].decode("utf-8")
+                    assert "<script" not in stripped, "a script survived --strip-scripts"
+                    assert "Fixture Site" in stripped, "stripping scripts took the page with it"
+                finally:
+                    offline_server.KEEP_SCRIPTS = True
+                return "kept by default, gone with --strip-scripts"
+
+            @check("the address bar is injected and can navigate")
+            def _():
+                page = request(base, proxy_path(site_base + "/index.html"))[1].decode("utf-8")
+                assert 'id="quietweb-bar"' in page, "no address bar was injected"
+                assert page.index('id="quietweb-bar"') < page.index("<h1>"), "the bar landed after the page content"
+                # urlopen follows the redirect, so a 200 carrying the About page
+                # is the proof that /p/go pointed somewhere real.
+                _, landed, _ = request(base, "/p/go?url=" + quote(site_base + "/about.html", safe=""))
+                assert b"<h1>About</h1>" in landed, landed[:200]
+                assert b"quietweb-bar" in landed, "the bar is missing after navigating"
+                return "bar injected at the top of <body>, /p/go navigates"
+
+            @check("/p/ offers somewhere to start")
+            def _():
+                _, payload, content_type = request(base, "/p/")
+                assert content_type == "text/html", content_type
+                assert b"quietweb-bar" in payload, "the start page has no address bar"
+                assert b"Browse through Quietweb" in payload, payload[:200]
+                return "start page served"
+
+            @check("a dead target explains itself instead of hanging")
+            def _():
+                _, payload, _ = request(base, proxy_path("http://127.0.0.1:1/gone"), expect=502)
+                assert b"Could not load that page" in payload, payload[:200]
+                assert b"quietweb-bar" in payload, "the error page has no way back"
+                return "502 with the address bar intact"
+        finally:
+            offline_server.ALLOW_PRIVATE_FETCH = origin
+            site.shutdown()
+            site.server_close()
+
     finally:
         httpd.shutdown()
         httpd.server_close()

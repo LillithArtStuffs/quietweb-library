@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture Site</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js"></script>
+  <style>.hero { background: url("pic.png") no-repeat; }</style>
+</head>
+<body>
+  <h1>Fixture Site</h1>
+  <div class="hero" style="background-image: url(pic.png)">inline style</div>
+  <img src="pic.png" alt="relative image">
+  <img src="/pic.png" alt="root-relative image">
+  <img srcset="pic.png 1x, /pic.png 2x" alt="srcset image">
+  <a id="relative" href="about.html">about (relative)</a>
+  <a id="rooted" href="/sub/deep.html">deep (root-relative)</a>
+  <a id="absolute" href="https://example.com/outside">outside (absolute)</a>
+  <a id="anchor" href="#section">anchor</a>
+  <a id="mail" href="mailto:someone@example.com">mail</a>
+  <script integrity="sha384-bogus" crossorigin="anonymous" src="/app.js"></script>
+</body>
+</html>

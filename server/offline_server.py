@@ -12,8 +12,10 @@ from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
+import browse
 import argparse
 import ipaddress
 import json
@@ -41,6 +43,10 @@ STARTED_AT = time.time()
 ADMIN_TOKEN = secrets.token_urlsafe(18)
 ANNOUNCEMENT = {"message": "", "updated": None}
 ALLOW_PRIVATE_FETCH = False
+KEEP_SCRIPTS = True
+MAX_PROXY_BYTES = 24 * 1024 * 1024
+BROWSER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
 def read_library():
@@ -154,6 +160,19 @@ def fetch_page(target):
         return {"title": title[:160], "snapshot": snapshot, "contentType": content_type}
 
 
+def open_target(target, method="GET", body=None, headers=None):
+    """Fetch a URL for the proxy, refusing anything the archive guard refuses."""
+    parsed = urlparse(target)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only complete http:// and https:// URLs can be browsed.")
+    if not ALLOW_PRIVATE_FETCH and is_private_host(parsed.hostname):
+        raise ValueError("Refusing to reach a private or local address through the proxy.")
+    sent = {"User-Agent": BROWSER_AGENT, "Accept-Language": "en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"}
+    sent.update(headers or {})
+    return urlopen(Request(target, data=body, headers=sent, method=method), timeout=25)
+
+
 class Handler(SimpleHTTPRequestHandler):
     server_version = "Quietweb/0.4"
 
@@ -208,8 +227,106 @@ class Handler(SimpleHTTPRequestHandler):
     def is_admin(self):
         return secrets.compare_digest(self.headers.get("X-Quietweb-Admin", ""), ADMIN_TOKEN)
 
+    def send_proxy_error(self, target, message):
+        page = ("<!doctype html><meta charset=\"utf-8\">"
+                "<style>body{margin:0;background:#13100f;color:#e3e3e3;"
+                "font:15px/1.6 system-ui,sans-serif}main{padding:40px 24px;max-width:640px}"
+                "h1{font-size:20px;font-weight:600}code{color:#bcb6ba;overflow-wrap:anywhere}"
+                "a{color:#e0566f}</style>"
+                + browse.toolbar(target)
+                + f"<main><h1>Could not load that page</h1><p>{browse.escape_attribute(message)}</p>"
+                + f"<p><code>{browse.escape_attribute(target)}</code></p></main>")
+        payload = page.encode("utf-8")
+        self.send_response(502)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def send_browse_start(self):
+        page = ("<!doctype html><meta charset=\"utf-8\"><title>Browse</title>"
+                "<style>body{margin:0;background:#13100f;color:#e3e3e3;"
+                "font:15px/1.6 system-ui,sans-serif}main{padding:48px 24px;max-width:620px}"
+                "h1{font-size:22px;font-weight:600;margin:0 0 10px}p{color:#bcb6ba;margin:0 0 8px}"
+                "a{color:#e0566f}</style>"
+                + browse.toolbar("")
+                + "<main><h1>Browse through Quietweb</h1>"
+                + "<p>Type an address above. Pages load through this server, so the device "
+                + "you are reading on never talks to the site directly.</p>"
+                + "<p>Addresses are rewritten as they are served, so sites that build their "
+                + "URLs in JavaScript will not work here.</p>"
+                + "<p><a href=\"/\">Back to the library</a></p></main>")
+        payload = page.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_proxy(self, token):
+        if not token:
+            self.send_browse_start()
+            return
+        try:
+            target = browse.decode_target(token)
+        except Exception:
+            self.send_json(400, {"error": "Malformed proxy address."})
+            return
+        try:
+            with open_target(target) as response:
+                # Redirects are followed by urlopen, so rewrite against where we
+                # actually landed rather than where we aimed.
+                final = response.geturl()
+                content_type = response.headers.get_content_type()
+                data = response.read(MAX_PROXY_BYTES + 1)
+                if len(data) > MAX_PROXY_BYTES:
+                    raise ValueError(f"That page is larger than the {MAX_PROXY_BYTES // (1024 * 1024)} MB limit.")
+                charset = response.headers.get_content_charset() or "utf-8"
+        except HTTPError as error:
+            self.send_proxy_error(target, f"The site returned HTTP {error.code}.")
+            return
+        except (URLError, ValueError, OSError) as error:
+            self.send_proxy_error(target, str(getattr(error, "reason", error)))
+            return
+
+        if content_type in {"text/html", "application/xhtml+xml"}:
+            body = browse.rewrite_html(data.decode(charset, errors="replace"), final, keep_scripts=KEEP_SCRIPTS)
+            payload = body.encode("utf-8")
+            content_type = "text/html; charset=utf-8"
+        elif content_type == "text/css":
+            payload = browse.rewrite_css(data.decode(charset, errors="replace"), final).encode("utf-8")
+            content_type = "text/css; charset=utf-8"
+        else:
+            payload = data  # Images, fonts, scripts and the rest pass straight through.
+            if content_type.startswith("text/"):
+                content_type = f"{content_type}; charset={charset}"
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/p/go":
+            typed = (parse_qs(parsed.query).get("url", [""])[0] or "").strip()
+            if typed and "://" not in typed:
+                typed = "https://" + typed
+            if not typed:
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.end_headers()
+                return
+            self.send_response(302)
+            self.send_header("Location", browse.PREFIX + browse.encode_target(typed))
+            self.end_headers()
+            return
+        if parsed.path.startswith(browse.PREFIX):
+            self.do_proxy(parsed.path[len(browse.PREFIX):])
+            return
         if parsed.path == "/api/library":
             with LIBRARY_LOCK:
                 self.send_json(200, {"pages": read_library()})
@@ -290,12 +407,13 @@ def serve(host, port):
 
 
 def main():
-    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH
+    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH, KEEP_SCRIPTS
     parser = argparse.ArgumentParser(description="Serve Quietweb locally or on an explicitly chosen network interface.")
     parser.add_argument("--host", default=HOST, help="Bind address; use 0.0.0.0 only on a trusted network.")
     parser.add_argument("--port", type=int, default=PORT, help="Port to serve on; the next free port is used if it is busy.")
     parser.add_argument("--admin-token", default="", help="Optional fixed admin token for this server session.")
     parser.add_argument("--allow-private-fetch", action="store_true", help="Permit archiving private/LAN addresses. Off by default.")
+    parser.add_argument("--strip-scripts", action="store_true", help="Remove scripts from browsed pages. Safer, but breaks more sites.")
     arguments = parser.parse_args()
 
     if arguments.admin_token:
@@ -303,6 +421,7 @@ def main():
             raise SystemExit("--admin-token must be at least 12 characters.")
         ADMIN_TOKEN = arguments.admin_token
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
+    KEEP_SCRIPTS = not arguments.strip_scripts
 
     httpd = serve(arguments.host, arguments.port)
     port = httpd.server_address[1]

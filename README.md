@@ -41,6 +41,26 @@ Browsers refuse to read pages from other sites, so **"Fetch URL content" only wo
 
 In LAN mode anyone on the same Wi-Fi can reach the fetch endpoint, so it refuses private and loopback targets unless you pass `--allow-private-fetch`.
 
+## Browsing through Quietweb
+
+Open **Browse** in the header, or go to `/p/` directly, and type an address. The page is fetched by the server and served back with every link, image and stylesheet rewritten to come through the proxy, so the device you are reading on never talks to the site.
+
+```text
+--strip-scripts     remove scripts from browsed pages: safer, breaks more sites
+```
+
+Scripts are kept by default, because a browsing proxy that drops them breaks most of the web. Pass `--strip-scripts` if you would rather have the safety.
+
+**What this cannot do.** It is a rewriting proxy: it can only redirect addresses that are written in the markup. Sites that build their URLs in JavaScript at runtime — most app-style sites, anything chat-shaped — will not work, and no amount of rewriting fixes that. It reads well for wikis, documentation, articles, forums and blogs. Logins will not survive yet either, because cookies are not carried between requests.
+
+The same guard as the archiver applies: private and loopback addresses are refused unless you pass `--allow-private-fetch`. Responses are capped at 24 MB and buffered rather than streamed, which is worth knowing when the host is a phone.
+
+**Traffic between your devices is not encrypted.** The server speaks plain HTTP, so on a shared network anything you browse through it is readable by others on that network. Use it on a network you trust.
+
+### Keeping it running on a phone
+
+iOS suspends backgrounded apps, and a terminal app has no background mode that keeps a socket alive, so the server stops shortly after you leave a-Shell. Keeping it up means keeping a-Shell in the foreground with Auto-Lock set to Never, ideally on a charger; Guided Access stops a stray swipe ending it. If you want something reachable at a stable address without babysitting it, host it on a machine that stays on instead.
+
 ## Sharing a library between devices
 
 The host server owns the shared library at `server_data/library.json`. Enter the admin token (printed at startup) in **Diagnostics**, and saved pages sync to the host while connected browsers poll for updates. Syncing **merges** rather than overwrites: the most recently updated copy of each page wins, and pages you delete stay deleted. `server_data/` is gitignored, so personal pages are never published.

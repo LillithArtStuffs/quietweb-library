@@ -18,6 +18,7 @@ import re
 import struct
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -256,6 +257,49 @@ def run():
         def _():
             request(base, "/api/admin/announcement", "POST", {"message": "nope"}, expect=403)
             return "rejected anonymous broadcast"
+
+        @check("literal addresses are judged without asking the resolver")
+        def _():
+            import socket as socket_module
+            original = socket_module.getaddrinfo
+
+            def refuse(*args, **kwargs):
+                raise AssertionError("the resolver was consulted for a literal address")
+
+            socket_module.getaddrinfo = refuse
+            try:
+                for host, private in [("127.0.0.1", True), ("192.168.0.1", True), ("10.0.0.5", True),
+                                      ("169.254.1.1", True), ("::1", True),
+                                      ("8.8.8.8", False), ("2001:4860:4860::8888", False)]:
+                    actual = offline_server.is_private_host(host)
+                    assert actual is private, f"{host} judged private={actual}, expected {private}"
+            finally:
+                socket_module.getaddrinfo = original
+            return "7 literals, no DNS"
+
+        @check("a stalled resolver cannot hang a request")
+        def _():
+            import socket as socket_module
+            original = socket_module.getaddrinfo
+            original_timeout = offline_server.RESOLVE_TIMEOUT
+
+            def stall(*args, **kwargs):
+                time.sleep(30)
+
+            socket_module.getaddrinfo = stall
+            offline_server.RESOLVE_TIMEOUT = 0.4
+            started = time.time()
+            try:
+                offline_server.is_private_host("example.invalid")
+                raise AssertionError("a stalled resolver was treated as a successful lookup")
+            except ValueError as error:
+                assert "Could not resolve" in str(error), error
+            finally:
+                socket_module.getaddrinfo = original
+                offline_server.RESOLVE_TIMEOUT = original_timeout
+            elapsed = time.time() - started
+            assert elapsed < 5, f"took {elapsed:.1f}s to give up"
+            return f"gave up after {elapsed:.1f}s instead of blocking"
 
         @check("fetch refuses non-http schemes and private targets")
         def _():

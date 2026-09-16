@@ -46,10 +46,20 @@ In LAN mode anyone on the same Wi-Fi can reach the fetch endpoint, so it refuses
 Open **Browse** in the header, or go to `/p/` directly, and type an address. The page is fetched by the server and served back with every link, image and stylesheet rewritten to come through the proxy, so the device you are reading on never talks to the site.
 
 ```text
---strip-scripts     remove scripts from browsed pages: safer, breaks more sites
+--proxy-passphrase X   set the passphrase; one is generated and printed if omitted
+--no-proxy-auth        serve the proxy with no passphrase at all
+--strip-scripts        remove scripts from browsed pages: safer, breaks more sites
 ```
 
 Scripts are kept by default, because a browsing proxy that drops them breaks most of the web. Pass `--strip-scripts` if you would rather have the safety.
+
+### The passphrase
+
+**The proxy is locked by default.** A passphrase is generated at startup and printed alongside the admin token, exactly as the admin token is. Visiting the proxy asks for it once and remembers the answer for 30 days; restarting the server signs everyone out.
+
+Behind the gate: `/p/` (the proxy), `/api/fetch` (the archiver's fetcher) and `/api/library` (your saved pages). Left open: the app shell and `/api/status`, so a locked server still loads and can tell you it is locked instead of failing silently.
+
+This matters because an open proxy on a home connection is the most abused misconfiguration there is — anyone who finds it can route traffic through it, and that traffic looks like it came from you. `--no-proxy-auth` turns the gate off for a network you trust, and the server says loudly at startup that it has done so.
 
 **What this cannot do.** It is a rewriting proxy: it can only redirect addresses that are written in the markup. Sites that build their URLs in JavaScript at runtime — most app-style sites, anything chat-shaped — will not work, and no amount of rewriting fixes that. It reads well for wikis, documentation, articles, forums and blogs. Logins will not survive yet either, because cookies are not carried between requests.
 

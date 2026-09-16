@@ -903,6 +903,19 @@ function clearForm() {
 
 /* ---------------------------------------------------------------- fetching */
 
+// Throwing on a response whose body was never read leaves the connection open,
+// so the request never completes and the browser keeps waiting on it.
+async function discard(response) {
+  try { await response.body?.cancel(); } catch (error) { /* already closed */ }
+}
+
+class LockedError extends Error {
+  constructor() {
+    super("This server is locked. Open Browse, enter the passphrase, then try again.");
+    this.name = "LockedError";
+  }
+}
+
 async function fetchSnapshot(url) {
   // Browsers block cross-site reads, so the local Python helper does the
   // fetching whenever it is running. The direct attempt is only a fallback for
@@ -910,11 +923,15 @@ async function fetchSnapshot(url) {
   let serverMessage = "";
   try {
     const response = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`, { cache: "no-store" });
+    // A locked server answers with a challenge, not a snapshot. Say so plainly
+    // instead of letting the login page fail to parse as JSON.
+    if (response.status === 401) { await discard(response); throw new LockedError(); }
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `The server returned ${response.status}.`);
     if (!payload.snapshot) throw new Error("The server returned an empty snapshot.");
     return { html: sanitizeHtml(payload.snapshot), title: payload.title || "", via: "server" };
   } catch (error) {
+    if (error instanceof LockedError) throw error;
     serverMessage = error.message || String(error);
   }
   try {
@@ -1110,7 +1127,8 @@ function sharedSignature(pages) {
 async function syncFromServer() {
   try {
     const response = await fetch("/api/library", { cache: "no-store" });
-    if (!response.ok) throw new Error("Shared library unavailable");
+    if (response.status === 401) { await discard(response); throw new Error("locked"); }
+    if (!response.ok) { await discard(response); throw new Error("Shared library unavailable"); }
     const remote = await response.json();
     const remotePages = Array.isArray(remote.pages) ? remote.pages : [];
     const signature = sharedSignature(remotePages);
@@ -1128,7 +1146,9 @@ async function syncFromServer() {
     // Push local-only pages and deletions back up when we hold the token.
     if (localStorage.getItem("quietweb-admin-token") && sharedSignature(merged) !== signature) await syncToServer();
   } catch (error) {
-    logEvent("shared library unavailable · using local copy");
+    logEvent(error.message === "locked"
+      ? "shared library locked · unlock at /p/login to sync"
+      : "shared library unavailable · using local copy");
   }
 }
 

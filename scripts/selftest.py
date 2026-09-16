@@ -417,6 +417,120 @@ def run():
                 assert b"Could not load that page" in payload, payload[:200]
                 assert b"quietweb-bar" in payload, "the error page has no way back"
                 return "502 with the address bar intact"
+            # ---- proxy passphrase gate ----------------------------------------
+            import http.client
+            import gate as gatekeeper
+
+            def raw(path, method="GET", body=None, cookie=None):
+                """A request that does not follow redirects and can carry a cookie."""
+                connection = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+                headers = {}
+                if cookie:
+                    headers["Cookie"] = cookie
+                if body is not None:
+                    headers["Content-Type"] = "application/x-www-form-urlencoded"
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                payload = response.read()
+                result = (response.status, payload, response.getheader("Set-Cookie"), response.getheader("Location"))
+                connection.close()
+                return result
+
+            offline_server.GATE = gatekeeper.Gate(passphrase="open-sesame-please")
+            offline_server.ALLOW_PRIVATE_FETCH = True
+            try:
+                @check("the gate signs a cookie that it alone accepts")
+                def _():
+                    cage = gatekeeper.Gate(passphrase="x" * 12)
+                    issued = cage.issue()
+                    assert cage.accepts(issued), "a freshly issued cookie was rejected"
+                    assert not cage.accepts(""), "an empty cookie was accepted"
+                    assert not cage.accepts("garbage"), "a malformed cookie was accepted"
+                    expires, _, signature = issued.partition(".")
+                    assert not cage.accepts(f"{expires}.{'0' * len(signature)}"), "a forged signature was accepted"
+                    assert not cage.accepts(f"{int(expires) + 1}.{signature}"), "an altered expiry was accepted"
+                    # A different server must not honour this one's cookies.
+                    assert not gatekeeper.Gate(passphrase="x" * 12).accepts(issued), "another server accepted it"
+                    stale = gatekeeper.Gate(passphrase="x" * 12, days=-1)
+                    assert not stale.accepts(stale.issue()), "an expired cookie was accepted"
+                    return "forged, altered, foreign and expired cookies all refused"
+
+                @check("the proxy demands the passphrase")
+                def _():
+                    status, payload, _, _ = raw(browse.PREFIX + browse.encode_target(site_base + "/index.html"))
+                    assert status == 401, status
+                    assert b"passphrase protected" in payload, payload[:200]
+                    return "401 with the login page"
+
+                @check("the archiver's fetcher is behind the same gate")
+                def _():
+                    status, payload, _, _ = raw("/api/fetch?url=" + quote(site_base + "/index.html", safe=""))
+                    assert status == 401, f"an unauthenticated fetch returned {status}"
+                    return "401, so it is not an open relay either"
+
+                @check("the app shell stays reachable so it can say it is locked")
+                def _():
+                    for path in ("/index.html", "/app.js", "/styles.css", "/api/status"):
+                        status, _, _, _ = raw(path)
+                        assert status == 200, f"{path} returned {status}"
+                    return "shell and status open, so a locked server still loads"
+
+                @check("the saved library is behind the gate too")
+                def _():
+                    status, payload, _, _ = raw("/api/library")
+                    assert status == 401, f"anyone reaching the server can read the library ({status})"
+                    assert json.loads(payload).get("unlock") == "/p/login", payload[:200]
+                    return "401 as JSON, pointing at the login"
+
+                @check("a wrong passphrase is refused")
+                def _():
+                    status, payload, cookie, _ = raw("/p/login", "POST", "passphrase=nope&next=/p/")
+                    assert status == 401, status
+                    assert cookie is None, "a cookie was handed out anyway"
+                    assert b"not right" in payload, payload[:200]
+                    return "401 and no cookie"
+
+                @check("the right passphrase opens it and the cookie works")
+                def _():
+                    status, _, cookie, location = raw("/p/login", "POST", "passphrase=open-sesame-please&next=/p/")
+                    assert status == 303, status
+                    assert cookie and gatekeeper.COOKIE_NAME in cookie, cookie
+                    assert "HttpOnly" in cookie and "SameSite=Lax" in cookie, f"weak cookie flags: {cookie}"
+                    assert location == "/p/", location
+                    jar = cookie.split(";")[0]
+                    status, payload, _, _ = raw(browse.PREFIX + browse.encode_target(site_base + "/index.html"), cookie=jar)
+                    assert status == 200, status
+                    assert b"Fixture Site" in payload, payload[:200]
+                    # And the archiver's fetcher opens with the same cookie.
+                    assert raw("/api/fetch?url=" + quote(site_base + "/index.html", safe=""), cookie=jar)[0] == 200
+                    return "303, cookie set, proxy and fetcher both open"
+
+                @check("the login will not bounce somewhere off-site")
+                def _():
+                    _, _, _, location = raw("/p/login", "POST", "passphrase=open-sesame-please&next=https://example.com/evil")
+                    assert location == "/p/", f"an open redirect: {location}"
+                    return "off-site next= forced back to /p/"
+
+                @check("--no-proxy-auth serves it open")
+                def _():
+                    offline_server.GATE = gatekeeper.Gate(enabled=False)
+                    try:
+                        status, payload, _, _ = raw(browse.PREFIX + browse.encode_target(site_base + "/index.html"))
+                        assert status == 200, status
+                        assert b"Fixture Site" in payload, payload[:200]
+                    finally:
+                        offline_server.GATE = gatekeeper.Gate(passphrase="open-sesame-please")
+                    return "open when explicitly asked for"
+
+                @check("a generated passphrase is long enough to be worth having")
+                def _():
+                    generated = gatekeeper.Gate().passphrase
+                    assert gatekeeper.Gate().passphrase != generated, "two servers generated the same passphrase"
+                    assert len(generated.replace("-", "")) >= 12, f"only {len(generated)} characters"
+                    return f"{len(generated)} characters, different every run"
+            finally:
+                offline_server.GATE = None
+
         finally:
             offline_server.ALLOW_PRIVATE_FETCH = origin
             site.shutdown()

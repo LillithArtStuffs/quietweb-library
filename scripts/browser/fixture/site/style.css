@@ -1,0 +1,4 @@
+@import "theme.css";
+body { background: url(pic.png) repeat; font-family: system-ui, sans-serif; }
+.badge { background-image: url('/pic.png'); }
+.inline { background-image: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=); }

@@ -832,6 +832,58 @@ def run():
             finally:
                 offline_server.GATE = None
 
+            @check("restricted-network CIDRs are parsed, and junk is refused")
+            def _():
+                nets = offline_server.parse_block_networks(["203.0.113.0/24", "10.0.0.0/8, 192.168.1.5"])
+                assert len(nets) == 3, [str(n) for n in nets]
+                assert str(nets[2]) == "192.168.1.5/32", "a bare address should become a /32"
+                assert offline_server.parse_block_networks([""]) == (), "blank should parse to nothing"
+                try:
+                    offline_server.parse_block_networks(["not-a-network"])
+                except SystemExit:
+                    return "3 parsed, blank ignored, garbage rejected"
+                raise AssertionError("a bad network was accepted")
+
+            @check("the real client is read from X-Forwarded-For, and spoofing only adds")
+            def _():
+                # Behind a tunnel the socket peer is the tunnel; the client is in XFF.
+                seen = offline_server.observed_addresses("10.9.9.9", "203.0.113.5, 70.1.2.3")
+                assert str(seen[0]) == "10.9.9.9" and str(seen[1]) == "203.0.113.5", [str(a) for a in seen]
+                blocked = (ipaddress.ip_network("203.0.113.0/24"),)
+                assert offline_server.restricted_by(seen, blocked), "the forwarded client was not caught"
+                # A forged header can only add addresses, so it can disable but never enable.
+                honest = offline_server.observed_addresses("203.0.113.5", None)
+                assert offline_server.restricted_by(honest, blocked), "the peer itself was not checked"
+                assert offline_server.observed_addresses("host.name", " , junk") == [], "junk became an address"
+                return "peer and every forwarded hop checked; bad values dropped"
+
+            @check("the proxy declines on a restricted network but the library does not")
+            def _():
+                import http.client
+
+                def hit(path, xff=None):
+                    connection = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+                    connection.request("GET", path, headers={"X-Forwarded-For": xff} if xff else {})
+                    response = connection.getresponse()
+                    status, body = response.status, response.read()
+                    connection.close()
+                    return status, body
+
+                offline_server.BLOCK_NETWORKS = offline_server.parse_block_networks(["203.0.113.0/24"])
+                try:
+                    status, body = hit("/p/", xff="203.0.113.5")
+                    assert status == 403, f"proxy served on a restricted network ({status})"
+                    assert b"turned off on this network" in body, body[:200]
+                    assert hit("/api/fetch?url=http://example.com", xff="203.0.113.5")[0] == 403, "fetch stayed open"
+                    assert hit("/api/library", xff="203.0.113.5")[0] == 200, "the library was blocked too"
+                    assert hit("/p/")[0] == 200, "an unrestricted visitor was refused"
+                    # Blocking loopback proves the socket peer is judged, not only XFF.
+                    offline_server.BLOCK_NETWORKS = offline_server.parse_block_networks(["127.0.0.0/8"])
+                    assert hit("/p/")[0] == 403, "the peer address was never checked"
+                finally:
+                    offline_server.BLOCK_NETWORKS = ()
+                return "403 with a notice on the restricted net, library and others untouched"
+
         finally:
             offline_server.ALLOW_PRIVATE_FETCH = origin
             site.shutdown()

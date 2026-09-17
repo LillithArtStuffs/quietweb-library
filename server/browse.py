@@ -188,6 +188,23 @@ def toolbar(current_url):
     )
 
 
+def notice_page(message):
+    """Shown in place of the proxy when it will not operate on this network."""
+    return (
+        '<!doctype html><meta charset="utf-8"><title>Browse unavailable</title>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        "<style>body{margin:0;background:#13100f;color:#e3e3e3;"
+        "font:15px/1.6 system-ui,sans-serif}main{padding:48px 24px;max-width:620px}"
+        "h1{font-size:22px;font-weight:600;margin:0 0 10px}p{color:#bcb6ba;margin:0 0 10px}"
+        "a{color:#e0566f}</style>"
+        "<main><h1>Browsing is turned off on this network</h1>"
+        f"<p>{escape_attribute(message)}</p>"
+        "<p>Your saved library still works — this only affects live browsing "
+        "through the proxy.</p>"
+        '<p><a href="/">Back to the library</a></p></main>'
+    )
+
+
 def rewrite_html(html, base, keep_scripts=True, with_toolbar=True):
     rewriter = Rewriter(base, keep_scripts=keep_scripts)
     rewriter.feed(html)

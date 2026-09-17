@@ -13,6 +13,7 @@ from threading import Thread
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+import ipaddress
 import json
 import re
 import shutil
@@ -279,6 +280,28 @@ def run():
             offline_server.reject_short_secret("--proxy-passphrase", "")
             return "short refused, long and unset accepted"
 
+        @check("a tailnet address is recognised but not called Wi-Fi")
+        def _():
+            # Tailscale's range is its own thing: reachable from anywhere on the
+            # tailnet, not by a device merely on the same Wi-Fi.
+            for address, tailnet in [("100.64.0.1", True), ("100.100.100.100", True),
+                                     ("100.127.255.254", True), ("100.128.0.1", False),
+                                     ("99.64.0.1", False), ("192.168.1.5", False)]:
+                found = ipaddress.ip_address(address)
+                assert (found in offline_server.TAILNET) is tailnet, f"{address} tailnet={not tailnet}"
+                if tailnet:
+                    assert not any(found in net for net in offline_server.LAN_NETWORKS), \
+                        f"{address} was also counted as Wi-Fi, which it is not"
+            return "6 addresses, tailnet kept separate from LAN"
+
+        @check("the tailnet probe reports nothing when there is no tailnet")
+        def _():
+            # It probes toward Tailscale's service address; with no tailnet the
+            # kernel answers with the default route, which must be rejected.
+            found = offline_server.tailnet_ip()
+            assert found is None or ipaddress.ip_address(found) in offline_server.TAILNET, \
+                f"reported {found}, which is not a tailnet address"
+            return "no tailnet here, and nothing invented"
 
         @check("only a reachable LAN address is offered to other devices")
         def _():

@@ -38,6 +38,10 @@ MIN_SECRET = 12
 # ipaddress.is_private, which is true of assignments like 192.0.0.0/29 that no
 # one can route to.
 LAN_NETWORKS = tuple(ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+# Tailscale hands out addresses from the carrier-grade NAT range. Deliberately
+# not in LAN_NETWORKS: a tailnet address is not reachable by a device merely on
+# the same Wi-Fi, so it earns its own line rather than the Wi-Fi wording.
+TAILNET = ipaddress.ip_network("100.64.0.0/10")
 BLOCKED_TAGS = {"script", "noscript", "iframe", "object", "embed", "form", "input", "button"}
 ALLOWED_ATTRIBUTES = {"alt", "class", "href", "src", "title", "width", "height"}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -492,6 +496,24 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def tailnet_ip():
+    """This machine's Tailscale address, if a tailnet is up.
+
+    local_ip() probes toward the internet, so the kernel answers with the
+    default route — which is never the tailnet. Probing toward Tailscale's own
+    service address is what makes it pick the tailnet interface instead.
+    """
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("100.100.100.100", 80))
+        address = probe.getsockname()[0]
+        probe.close()
+        found = ipaddress.ip_address(address)
+    except (OSError, ValueError):
+        return None
+    return address if found in TAILNET else None
+
+
 def serve(host, port):
     """Bind the first free port at or after the requested one."""
     handler = lambda *args, **kwargs: Handler(*args, directory=str(WEB_ROOT), **kwargs)
@@ -536,12 +558,15 @@ def main():
         print(f"(port {arguments.port} was busy, so {port} was used instead)")
     if arguments.host in {"0.0.0.0", "::"}:
         address = local_ip()
+        tailnet = tailnet_ip()
         if address:
             print(f"For another device on the same Wi-Fi, try: http://{address}:{port}/")
             print("LAN mode is enabled. Use this only on a trusted private network.")
-        else:
+        elif not tailnet:
             print("No Wi-Fi address found, so no other device can reach this server right now.")
             print("Join a Wi-Fi network and restart to share it.")
+        if tailnet:
+            print(f"On your tailnet, from anywhere: http://{tailnet}:{port}/")
     print(f"Admin token: {ADMIN_TOKEN}")
     if GATE.enabled:
         print(f"Proxy passphrase: {GATE.passphrase}" + ("  (generated)" if GATE.generated else ""))

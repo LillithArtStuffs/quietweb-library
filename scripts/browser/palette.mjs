@@ -5,7 +5,12 @@
  * JPEG, WebP, AVIF, GIF. Useful when building a theme from character art or a
  * screenshot instead of guessing hex codes.
  *
+ * The source can be a local file or an http(s) address, so a reference sheet
+ * can be sampled straight from the page it lives on without downloading it
+ * first:
+ *
  *     node scripts/browser/palette.mjs ref-sheet.png [--colours 12]
+ *     node scripts/browser/palette.mjs https://example.com/teto.png --crop 40,0,200,600
  *
  * Prints the most common colours and, separately, the most saturated ones,
  * because the colour that *identifies* a design is rarely the one that covers
@@ -63,11 +68,29 @@ const MEDIA_TYPES = {
   ".avif": "image/avif", ".gif": "image/gif", ".bmp": "image/bmp"
 };
 
-async function sample(page, file, crop) {
-  // A data: URL keeps the canvas same-origin, so getImageData is allowed.
-  const bytes = await readFile(file);
-  const type = MEDIA_TYPES[extname(file).toLowerCase()] || "image/png";
-  const url = `data:${type};base64,${bytes.toString("base64")}`;
+function isUrl(source) {
+  return /^https?:\/\//i.test(source);
+}
+
+async function loadDataUrl(source) {
+  // A data: URL keeps the canvas same-origin, so getImageData is allowed —
+  // whether the bytes came off disk or off the network.
+  if (isUrl(source)) {
+    const response = await fetch(source, { headers: { "User-Agent": "quietweb-palette" }, redirect: "follow" });
+    if (!response.ok) throw new Error(`server returned HTTP ${response.status}`);
+    const declared = (response.headers.get("content-type") || "").split(";")[0].trim();
+    // Some hosts serve images as octet-stream; the pixels are the same, so keep
+    // a real image type rather than letting the browser refuse to decode.
+    const type = declared.startsWith("image/") ? declared : "image/png";
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return `data:${type};base64,${bytes.toString("base64")}`;
+  }
+  const bytes = await readFile(source);
+  const type = MEDIA_TYPES[extname(source).toLowerCase()] || "image/png";
+  return `data:${type};base64,${bytes.toString("base64")}`;
+}
+
+async function sample(page, url, crop) {
   return page.evaluate(async ({ url, maxEdge, crop }) => {
     const image = new Image();
     image.src = url;
@@ -125,20 +148,25 @@ function report(title, rows) {
 async function main() {
   const { files, colours, crop } = parseArguments(process.argv.slice(2));
   if (!files.length) {
-    console.error("usage: node scripts/browser/palette.mjs <image> [more images...] [--colours N] [--crop x,y,w,h]");
+    console.error("usage: node scripts/browser/palette.mjs <image|url> [more...] [--colours N] [--crop x,y,w,h]");
     process.exit(2);
   }
-  for (const file of files) {
-    try { await access(file); }
-    catch (error) { console.error(`cannot read ${file}`); process.exit(2); }
+  // Local files can be checked up front, before spending time on a browser.
+  for (const source of files) {
+    if (isUrl(source)) continue;
+    try { await access(source); }
+    catch (error) { console.error(`cannot read ${source}`); process.exit(2); }
   }
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
   const page = await browser.newPage();
   try {
-    for (const file of files) {
-      const { dimensions, counted, buckets } = await sample(page, file, crop);
-      console.log(`\n${file}  ${dimensions[0]}x${dimensions[1]}  ${counted} opaque pixels sampled`);
+    for (const source of files) {
+      let url;
+      try { url = await loadDataUrl(source); }
+      catch (error) { console.error(`\n${source}: ${error.message}`); process.exitCode = 1; continue; }
+      const { dimensions, counted, buckets } = await sample(page, url, crop);
+      console.log(`\n${source}  ${dimensions[0]}x${dimensions[1]}  ${counted} opaque pixels sampled`);
       const byShare = [...buckets].sort((a, b) => b.share - a.share).slice(0, colours);
       report("most of the image", byShare);
       // Weighting by saturation surfaces hair and accent colours, which a

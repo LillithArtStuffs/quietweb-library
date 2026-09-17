@@ -22,6 +22,7 @@ import gate as gatekeeper
 import argparse
 import ipaddress
 import json
+import os
 import platform
 import re
 import secrets
@@ -58,6 +59,10 @@ ANNOUNCEMENT = {"message": "", "updated": None}
 ALLOW_PRIVATE_FETCH = False
 KEEP_SCRIPTS = True
 GATE = None
+# Networks where the proxy refuses to operate rather than route around them —
+# a school or workplace whose filter it would otherwise be circumventing. Empty
+# unless configured. The tool declines on these networks; it does not hide.
+BLOCK_NETWORKS = ()
 MAX_PROXY_BYTES = 24 * 1024 * 1024
 BROWSER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -355,6 +360,27 @@ class Handler(SimpleHTTPRequestHandler):
     def gated(self):
         return GATE is not None and not GATE.permits(self.headers.get("Cookie"))
 
+    def blocked_network(self):
+        """The restricted network this request comes from, or None."""
+        if not BLOCK_NETWORKS:
+            return None
+        addresses = observed_addresses(self.client_address[0], self.headers.get("X-Forwarded-For"))
+        return restricted_by(addresses, BLOCK_NETWORKS)
+
+    def send_network_notice(self, network):
+        """Refuse to proxy on a restricted network, and say so plainly."""
+        # A restricted network is worth a line in the log: it is the tool
+        # declining, and the operator should be able to see that it happened.
+        sys.stderr.write(f"Proxy refused: request from restricted network {network}.\n")
+        message = "This copy of Quietweb is set not to browse through the proxy on this network."
+        payload = browse.notice_page(message).encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def send_login(self, next_path="/p/", message="", status=200):
         payload = gatekeeper.login_page(browse.escape_attribute(next_path), message).encode("utf-8")
         self.send_response(status)
@@ -366,6 +392,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        # Before anything else the proxy could do, decline it on a restricted
+        # network — ahead of the gate, so the notice explains itself rather than
+        # asking for a passphrase that would not help. The library is not the
+        # proxy, so it is left alone.
+        if parsed.path.startswith(browse.PREFIX) or parsed.path == "/api/fetch":
+            network = self.blocked_network()
+            if network:
+                if parsed.path == "/api/fetch":
+                    self.send_json(403, {"error": "network-restricted"})
+                else:
+                    self.send_network_notice(network)
+                return
         if parsed.path == "/p/login":
             self.send_login(parse_qs(parsed.query).get("next", ["/p/"])[0])
             return
@@ -425,6 +463,11 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         if parsed.path == "/p/login":
+            network = self.blocked_network()
+            if network:
+                # Unlocking is pointless when the proxy will not run here anyway.
+                self.send_network_notice(network)
+                return
             length = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
             fields = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
             following = fields.get("next", ["/p/"])[0]
@@ -508,6 +551,56 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def parse_block_networks(values):
+    """Turn --block-network / env CIDRs into networks, or explain what is wrong.
+
+    Each names a network the proxy must not operate on — one you are not
+    permitted to browse through, so the tool declines there rather than dodging
+    the filter that stands in the way.
+    """
+    networks = []
+    for value in values:
+        for piece in str(value).replace(",", " ").split():
+            try:
+                networks.append(ipaddress.ip_network(piece, strict=False))
+            except ValueError as error:
+                raise SystemExit(f"--block-network {piece!r} is not a valid network: {error}")
+    return tuple(networks)
+
+
+def observed_addresses(peer, forwarded_header):
+    """Every source address this request appears to come from.
+
+    Behind a tunnel or a Codespaces port-forward the socket peer is the proxy in
+    front and the real client is in X-Forwarded-For, so both are checked. A
+    client can forge that header, but only to *add* addresses — so testing all
+    of them can disable the proxy for more requests, never fewer. That is the
+    safe direction: the failure mode is refusing when it need not, not routing
+    when it must not.
+    """
+    seen = []
+
+    def add(text):
+        try:
+            seen.append(ipaddress.ip_address(str(text).strip().strip("[]")))
+        except ValueError:
+            pass  # Not an address (a hostname, blank, junk). Ignore it.
+
+    add(peer)
+    for hop in (forwarded_header or "").split(","):
+        add(hop)
+    return seen
+
+
+def restricted_by(addresses, networks):
+    """The first blocked network any of these addresses falls in, or None."""
+    for address in addresses:
+        for network in networks:
+            if address in network:
+                return network
+    return None
+
+
 def tailnet_ip():
     """This machine's Tailscale address, if a tailnet is up.
 
@@ -560,7 +653,7 @@ def serve(host, port):
 
 
 def main():
-    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH, KEEP_SCRIPTS, GATE
+    global ADMIN_TOKEN, ALLOW_PRIVATE_FETCH, KEEP_SCRIPTS, GATE, BLOCK_NETWORKS
     parser = argparse.ArgumentParser(description="Serve Quietweb locally or on an explicitly chosen network interface.")
     parser.add_argument("--host", default=HOST, help="Bind address; use 0.0.0.0 only on a trusted network.")
     parser.add_argument("--port", type=int, default=PORT, help="Port to serve on; the next free port is used if it is busy.")
@@ -570,6 +663,8 @@ def main():
     parser.add_argument("--proxy-passphrase", default="", help="Passphrase for the browsing proxy. One is generated if omitted.")
     parser.add_argument("--no-proxy-auth", action="store_true", help="Serve the proxy with no passphrase. Only ever on a network you trust.")
     parser.add_argument("--funnel", action="store_true", help="Publish a public https://<name>.ts.net address with Tailscale Funnel.")
+    parser.add_argument("--block-network", action="append", default=[], metavar="CIDR",
+                        help="A network where the proxy refuses to run (repeatable). The library still works.")
     arguments = parser.parse_args()
 
     if arguments.admin_token:
@@ -581,6 +676,9 @@ def main():
         " use --no-proxy-auth if you genuinely want it open.")
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
     KEEP_SCRIPTS = not arguments.strip_scripts
+    # Networks from the flag and the environment both count, so a deployment can
+    # bake the restriction into its config without touching the command line.
+    BLOCK_NETWORKS = parse_block_networks(arguments.block_network + [os.environ.get("QUIETWEB_BLOCK_NETWORKS", "")])
     GATE = gatekeeper.Gate(passphrase=arguments.proxy_passphrase or None,
                            enabled=not arguments.no_proxy_auth,
                            groups=5 if arguments.funnel else 3)
@@ -626,6 +724,8 @@ def main():
             for line in str(error).split("\n"):
                 print(f"  {line}")
     print(f"Admin token: {ADMIN_TOKEN}")
+    if BLOCK_NETWORKS:
+        print("Proxy disabled for: " + ", ".join(str(net) for net in BLOCK_NETWORKS))
     if GATE.enabled:
         print(f"Proxy passphrase: {GATE.passphrase}" + ("  (generated)" if GATE.generated else ""))
     else:

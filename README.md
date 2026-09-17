@@ -95,6 +95,24 @@ Wrong passphrases are also rate limited: eight wrong answers and that client wai
 
 Two things a tunnel does not fix. Traffic to a funnel address is HTTPS end to end, but a school network can still block `ts.net` by category the same way it blocks anything else, and a managed laptop's own monitoring sees what you browse regardless of how it reached your server.
 
+### Refusing to proxy on a network you should not
+
+The proxy can route around a network's filter. On a network where you are not permitted to do that — a school or a workplace — the right thing is for the tool to decline, not to hide. `--block-network` names networks where the proxy refuses to run:
+
+```text
+--block-network CIDR   a network where the proxy will not operate (repeatable)
+```
+
+You can also set `QUIETWEB_BLOCK_NETWORKS` to a space- or comma-separated list, so a hosted deployment carries the restriction in its config rather than its command line. Point it at the public range the devices in question appear from — for a school, that is the district's egress range, which you can read off its own block page:
+
+```sh
+python3 server/offline_server.py --block-network 203.0.113.0/24
+```
+
+On a request from one of those networks, `/p/` and `/api/fetch` return a plain notice instead of proxying, and the server logs the refusal. The saved library keeps working — reading your own archived pages is not proxying. The client address is read from `X-Forwarded-For` as well as the socket, so it still works behind a tunnel or a cloud port-forward; because a forged header can only *add* addresses, the check can only ever refuse more, never fewer.
+
+This is deliberately the opposite of evading a filter. A filter exists for a reason on the network that runs it; this lets the tool respect that without you having to remember to.
+
 ### Keeping it running on a phone
 
 iOS suspends backgrounded apps, and a terminal app has no background mode that keeps a socket alive, so the server stops shortly after you leave a-Shell. Keeping it up means keeping a-Shell in the foreground with Auto-Lock set to Never, ideally on a charger; Guided Access stops a stray swipe ending it. If you want something reachable at a stable address without babysitting it, host it on a machine that stays on instead.

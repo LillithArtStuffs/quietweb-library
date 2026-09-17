@@ -144,9 +144,10 @@ Leaving the editor without saving reverts the preview.
 
 ```sh
 node scripts/browser/palette.mjs reference.png
+node scripts/browser/palette.mjs https://example.com/character-sheet.png --crop 40,0,200,600
 ```
 
-Decodes the image in Chromium — so PNG, JPEG, WebP, AVIF and GIF all work — and prints the palette twice: by how much of the image each colour covers, and weighted by saturation. The second list is the useful one for accents, since the colour that identifies a design is rarely the one covering the most pixels. Each row gives hex, share, and HSL. Feed the results into the editor above.
+The source can be a local file or an http(s) address, so you can sample a reference sheet straight from the page it lives on. Decodes the image in Chromium — so PNG, JPEG, WebP, AVIF and GIF all work — and prints the palette twice: by how much of the image each colour covers, and weighted by saturation. The second list is the useful one for accents, since the colour that identifies a design is rarely the one covering the most pixels. Each row gives hex, share, and HSL. Feed the results into the editor above.
 
 `scripts/selftest.py` fails the build if a theme leaves any token undefined, if the editor cannot reach a token the stylesheet declares (or offers one it does not), if the picker and `app.js` disagree, or if any colour gets hardcoded outside a theme block. The browser suite checks that each theme repaints every surface, that syntax colours change with it, that a saved theme survives a reload, that switching back to a built-in drops the custom values, and that no theme drops a sampled text/background pair below 3:1.
 

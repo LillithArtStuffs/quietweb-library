@@ -673,6 +673,162 @@ def run():
                     assert gatekeeper.Gate().passphrase != generated, "two servers generated the same passphrase"
                     assert len(generated.replace("-", "")) >= 12, f"only {len(generated)} characters"
                     return f"{len(generated)} characters, different every run"
+
+                @check("the login itself enforces the lockout")
+                def _():
+                    offline_server.GATE = gatekeeper.Gate(passphrase="open-sesame-please")
+                    try:
+                        # One real wrong answer, to prove the handler counts it at all.
+                        raw("/p/login", "POST", "passphrase=nope&next=/p/")
+                        assert offline_server.GATE.wrong.get("127.0.0.1"), "a wrong answer was not counted"
+                        # The rest are seeded: eight real ones would sleep eight seconds.
+                        for _ in range(gatekeeper.WRONG_ALLOWED):
+                            offline_server.GATE.record_failure("127.0.0.1")
+                        status, payload, cookie, _ = raw("/p/login", "POST", "passphrase=open-sesame-please&next=/p/")
+                        assert status == 429, f"the right passphrase still worked while locked out ({status})"
+                        assert cookie is None, "a cookie was handed out during a lockout"
+                        assert b"Try again in" in payload, payload[:200]
+                    finally:
+                        offline_server.GATE = gatekeeper.Gate(passphrase="open-sesame-please")
+                    return "counts wrong answers, then 429s even the right one"
+
+                @check("repeated wrong passphrases lock the guesser out")
+                def _():
+                    cage = gatekeeper.Gate(passphrase="x" * 16)
+                    for _ in range(gatekeeper.WRONG_ALLOWED):
+                        assert cage.locked_out("10.0.0.9") == 0, "locked out before the budget was spent"
+                        cage.record_failure("10.0.0.9")
+                    assert cage.locked_out("10.0.0.9") > 0, "guessing is unlimited"
+                    assert cage.locked_out("10.0.0.10") == 0, "one guesser locked out everybody"
+                    cage.forgive("10.0.0.9")
+                    assert cage.locked_out("10.0.0.9") == 0, "the right passphrase did not clear it"
+                    for _ in range(gatekeeper.WRONG_ALLOWED):
+                        cage.record_failure("10.0.0.11")
+                    later = time.time() + gatekeeper.LOCKOUT_SECONDS + 1
+                    assert cage.locked_out("10.0.0.11", now=later) == 0, "the lockout never lifts"
+                    return f"{gatekeeper.WRONG_ALLOWED} guesses, then {gatekeeper.LOCKOUT_SECONDS}s, per address"
+
+                @check("a spray of forged addresses cannot grow the lockout table")
+                def _():
+                    cage = gatekeeper.Gate(passphrase="x" * 16)
+                    for number in range(gatekeeper.MAX_TRACKED + 50):
+                        cage.record_failure(f"203.0.113.{number}")
+                    assert len(cage.wrong) <= gatekeeper.MAX_TRACKED, f"grew to {len(cage.wrong)}"
+                    return f"held at {len(cage.wrong)} entries"
+
+                @check("funnel refuses to publish anything guessable")
+                def _():
+                    import funnel
+                    assert funnel.refuse("a-genuinely-private-phrase", False, ROOT), \
+                        "an open proxy was cleared for the public internet"
+                    assert funnel.refuse("short-one", True, ROOT), "a short passphrase was cleared"
+                    assert funnel.refuse("quietweb-open-up", True, ROOT), "a published example was cleared"
+                    allowed = funnel.refuse("vault-hymn-cinder-glass", True, ROOT)
+                    assert not allowed, f"a real passphrase was refused: {allowed}"
+                    return "open proxy, short and published all refused"
+
+                @check("a passphrase written in the project is not treated as a secret")
+                def _():
+                    import funnel
+                    # A phrase really in the README, so this cannot rot into a no-op.
+                    phrase = "an open proxy on a home connection"
+                    assert phrase in (ROOT / "README.md").read_text(encoding="utf-8"), "the README moved on"
+                    assert funnel.published_in(phrase, ROOT) == "README.md", "did not find it"
+                    assert funnel.refuse(phrase, True, ROOT), "a phrase lifted from the README was cleared"
+                    return "caught a passphrase copied out of README.md"
+
+                @check("--funnel generates a passphrase strong enough to be public")
+                def _():
+                    import funnel
+                    generated = gatekeeper.Gate(groups=5).passphrase
+                    assert len(generated) >= funnel.MIN_PUBLIC_SECRET, f"only {len(generated)} characters"
+                    refused = funnel.refuse(generated, True, ROOT)
+                    assert not refused, f"its own generated passphrase was refused: {refused}"
+                    # And the ordinary one is still too thin for the open internet,
+                    # which is the whole reason --funnel asks for more groups.
+                    assert funnel.refuse(gatekeeper.Gate().passphrase, True, ROOT), \
+                        "the local default cleared the public bar, so --funnel changes nothing"
+                    return f"{len(generated)} characters, and the local default is still refused"
+
+                @check("the funnel is started and taken down with the right commands")
+                def _():
+                    import funnel
+                    calls = []
+
+                    def fake(arguments):
+                        calls.append(arguments[1:])
+                        if "--bg" in arguments:
+                            return 0, ("Available on the internet:\n\nhttps://desk.tail1a2b.ts.net/\n"
+                                       "|-- proxy http://127.0.0.1:8765\n"), ""
+                        return 0, "", ""
+
+                    tunnel = funnel.Funnel(run=fake, binary="tailscale")
+                    address = tunnel.start(8765)
+                    assert address == "https://desk.tail1a2b.ts.net", address
+                    assert calls[0] == ["funnel", "--bg", "8765"], calls[0]
+                    assert tunnel.stop() is True, "stopping reported failure"
+                    assert calls[1] == ["funnel", "--https=443", "off"], calls[1]
+                    assert tunnel.stop() is True and len(calls) == 2, "stopping twice ran the command twice"
+                    return "funnel --bg 8765 up, funnel --https=443 off down"
+
+                @check("a funnel that will not start says why")
+                def _():
+                    import funnel
+                    reason = "Funnel is not enabled on your tailnet."
+
+                    def fake(arguments):
+                        return 1, "", reason + " Enable it in the admin console."
+
+                    tunnel = funnel.Funnel(run=fake, binary="tailscale")
+                    try:
+                        tunnel.start(8765)
+                    except funnel.FunnelError as error:
+                        assert reason in str(error), error
+                        assert not tunnel.serving, "a refused funnel is believed to be running"
+                        return "relays Tailscale's own reason instead of inventing one"
+                    raise AssertionError("a refused funnel was reported as started")
+
+                @check("the public address comes from the daemon when the command prints none")
+                def _():
+                    import funnel
+
+                    def quiet(arguments):
+                        if "status" in arguments:
+                            return 0, json.dumps({"Self": {"DNSName": "desk.tail1a2b.ts.net."}}), ""
+                        return 0, "Funnel started and running in the background.\n", ""
+
+                    address = funnel.Funnel(run=quiet, binary="tailscale").start(8765)
+                    assert address == "https://desk.tail1a2b.ts.net", address
+
+                    def nameless(arguments):
+                        if "status" in arguments:
+                            return 0, json.dumps({"Self": {"DNSName": ""}}), ""
+                        return 0, "", ""
+
+                    try:
+                        funnel.Funnel(run=nameless, binary="tailscale").start(8765)
+                    except funnel.FunnelError as error:
+                        assert "MagicDNS" in str(error), error
+                        return "falls back to tailscale status, and refuses to invent a name"
+                    raise AssertionError("a machine with no name produced an address anyway")
+
+                @check("a killed server still closes its funnel")
+                def _():
+                    import signal
+                    # Invoke the handler rather than signalling: os.kill would end
+                    # this process on Windows, where SIGTERM cannot be caught.
+                    previous = signal.getsignal(signal.SIGTERM)
+                    try:
+                        offline_server.stop_on_termination()
+                        handler = signal.getsignal(signal.SIGTERM)
+                        assert callable(handler), f"SIGTERM is still {handler}"
+                        try:
+                            handler(signal.SIGTERM, None)
+                        except KeyboardInterrupt:
+                            return "SIGTERM unwinds like Ctrl+C, so the funnel comes down"
+                        raise AssertionError("SIGTERM would kill the process with the funnel still up")
+                    finally:
+                        signal.signal(signal.SIGTERM, previous)
             finally:
                 offline_server.GATE = None
 

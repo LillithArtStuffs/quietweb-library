@@ -11,6 +11,7 @@ no server-side session store and stops being valid on its own.
 """
 
 from http.cookies import SimpleCookie
+from threading import Lock
 import hashlib
 import hmac
 import secrets
@@ -18,17 +19,25 @@ import time
 
 COOKIE_NAME = "quietweb_gate"
 DEFAULT_DAYS = 30
+# Guessing budget. The server is threaded, so a one second pause per wrong
+# answer is no obstacle to someone trying hundreds at once; a lockout is.
+WRONG_ALLOWED = 8
+LOCKOUT_SECONDS = 60
+MAX_TRACKED = 1024
 
 
 class Gate:
-    def __init__(self, passphrase=None, enabled=True, days=DEFAULT_DAYS):
+    def __init__(self, passphrase=None, enabled=True, days=DEFAULT_DAYS, groups=3):
         self.enabled = enabled
-        # A generated passphrase is short enough to retype on a phone.
-        self.passphrase = passphrase or "-".join(secrets.token_hex(2) for _ in range(3))
+        # A generated passphrase is short enough to retype on a phone. More
+        # groups when it is going somewhere public, where 48 bits is thin.
+        self.passphrase = passphrase or "-".join(secrets.token_hex(2) for _ in range(groups))
         self.generated = passphrase is None
         self.days = days
         # New secret per run, so restarting the server signs everyone out.
         self.secret = secrets.token_bytes(32)
+        self.wrong = {}
+        self.wrong_lock = Lock()
 
     def _sign(self, expires):
         return hmac.new(self.secret, str(expires).encode("ascii"), hashlib.sha256).hexdigest()
@@ -49,6 +58,40 @@ class Gate:
 
     def matches(self, attempt):
         return hmac.compare_digest(str(attempt or ""), self.passphrase)
+
+    def locked_out(self, client, now=None):
+        """Seconds this client must wait before guessing again, or 0.
+
+        Behind a funnel every request arrives from the local Tailscale daemon,
+        so this collapses into one shared budget. That is the safe direction:
+        it throttles the internet as a whole rather than letting each source
+        address have its own allowance.
+        """
+        now = time.time() if now is None else now
+        with self.wrong_lock:
+            recent = [at for at in self.wrong.get(client, []) if at > now - LOCKOUT_SECONDS]
+            if recent:
+                self.wrong[client] = recent
+            else:
+                self.wrong.pop(client, None)
+            if len(recent) < WRONG_ALLOWED:
+                return 0
+            return max(1, int(recent[0] + LOCKOUT_SECONDS - now))
+
+    def record_failure(self, client, now=None):
+        """Count a wrong passphrase against this client."""
+        now = time.time() if now is None else now
+        with self.wrong_lock:
+            if client not in self.wrong and len(self.wrong) >= MAX_TRACKED:
+                # Never let a spray of forged source addresses grow this without
+                # bound; the oldest entry is the one worth losing.
+                self.wrong.pop(next(iter(self.wrong)), None)
+            self.wrong.setdefault(client, []).append(now)
+
+    def forgive(self, client):
+        """Clear a client's failures once it gets the passphrase right."""
+        with self.wrong_lock:
+            self.wrong.pop(client, None)
 
     def cookie_header(self, value):
         age = self.days * 86400

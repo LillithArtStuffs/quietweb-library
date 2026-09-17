@@ -5,7 +5,8 @@ Then open: http://127.0.0.1:8765/
 
 This is a personal archive helper, not a public proxy. It binds to loopback by
 default and should only be exposed to a trusted private network, and only for
-pages you are authorised to archive.
+pages you are authorised to archive. --funnel is the one exception, and it
+refuses to run until the passphrase is strong enough to stand on the internet.
 """
 
 from html.parser import HTMLParser
@@ -16,6 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 import browse
+import funnel
 import gate as gatekeeper
 import argparse
 import ipaddress
@@ -23,6 +25,7 @@ import json
 import platform
 import re
 import secrets
+import signal
 import socket
 import sys
 import time
@@ -427,14 +430,23 @@ class Handler(SimpleHTTPRequestHandler):
             following = fields.get("next", ["/p/"])[0]
             if not following.startswith("/"):
                 following = "/p/"  # Never bounce to an address someone else chose.
+            client = self.client_address[0]
+            waiting = GATE.locked_out(client) if GATE is not None else 0
+            if waiting:
+                self.send_login(following, f"Too many wrong answers. Try again in {waiting}s.",
+                                status=429)
+                return
             if GATE is None or GATE.matches(fields.get("passphrase", [""])[0]):
+                if GATE is not None:
+                    GATE.forgive(client)
                 self.send_response(303)
                 self.send_header("Location", following)
                 if GATE is not None:
                     self.send_header("Set-Cookie", GATE.cookie_header(GATE.issue()))
                 self.end_headers()
                 return
-            time.sleep(1)  # Enough to make guessing tedious without locking anyone out.
+            GATE.record_failure(client)
+            time.sleep(1)  # Slows a single guesser; the lockout handles a parallel one.
             self.send_login(following, "That passphrase was not right.", status=401)
             return
         if parsed.path not in {"/api/library", "/api/admin/announcement"}:
@@ -514,6 +526,27 @@ def tailnet_ip():
     return address if found in TAILNET else None
 
 
+def stop_on_termination():
+    """Make a kill signal unwind the same way Ctrl+C does.
+
+    The default handler ends the process without running any finally block. That
+    is harmless for a local server and not at all harmless for a funnel, which
+    would stay published, pointing a public address at whatever takes the port
+    next.
+    """
+    def interrupt(_number, _frame):
+        raise KeyboardInterrupt
+
+    for name in ("SIGTERM", "SIGHUP"):
+        found = getattr(signal, name, None)
+        if found is None:
+            continue  # Windows has no SIGHUP.
+        try:
+            signal.signal(found, interrupt)
+        except (OSError, ValueError):
+            pass  # Not the main thread, or the platform refuses. Not fatal.
+
+
 def serve(host, port):
     """Bind the first free port at or after the requested one."""
     handler = lambda *args, **kwargs: Handler(*args, directory=str(WEB_ROOT), **kwargs)
@@ -536,6 +569,7 @@ def main():
     parser.add_argument("--strip-scripts", action="store_true", help="Remove scripts from browsed pages. Safer, but breaks more sites.")
     parser.add_argument("--proxy-passphrase", default="", help="Passphrase for the browsing proxy. One is generated if omitted.")
     parser.add_argument("--no-proxy-auth", action="store_true", help="Serve the proxy with no passphrase. Only ever on a network you trust.")
+    parser.add_argument("--funnel", action="store_true", help="Publish a public https://<name>.ts.net address with Tailscale Funnel.")
     arguments = parser.parse_args()
 
     if arguments.admin_token:
@@ -548,7 +582,14 @@ def main():
     ALLOW_PRIVATE_FETCH = arguments.allow_private_fetch
     KEEP_SCRIPTS = not arguments.strip_scripts
     GATE = gatekeeper.Gate(passphrase=arguments.proxy_passphrase or None,
-                           enabled=not arguments.no_proxy_auth)
+                           enabled=not arguments.no_proxy_auth,
+                           groups=5 if arguments.funnel else 3)
+    if arguments.funnel:
+        # Checked before the port is even bound: a refusal here is about the
+        # passphrase, and nothing should be listening while we explain that.
+        refusal = funnel.refuse(GATE.passphrase, GATE.enabled, PROJECT_ROOT)
+        if refusal:
+            raise SystemExit(refusal)
 
     httpd = serve(arguments.host, arguments.port)
     port = httpd.server_address[1]
@@ -567,6 +608,23 @@ def main():
             print("Join a Wi-Fi network and restart to share it.")
         if tailnet:
             print(f"On your tailnet, from anywhere: http://{tailnet}:{port}/")
+    tunnel = funnel.Funnel() if arguments.funnel else None
+    if tunnel:
+        try:
+            print(f"On the public internet: {tunnel.start(port)}/p/")
+            stop_on_termination()
+            print("Anyone can reach that address, so the passphrase below is the only")
+            print("thing stopping them. The funnel closes when this server stops.")
+            if ALLOW_PRIVATE_FETCH:
+                # The gate still stands in the way, but this turns one guessed
+                # passphrase into a tour of the whole house network.
+                print("WARNING: --allow-private-fetch is on behind a public address, so anyone")
+                print("         past the passphrase can reach your LAN through this server.")
+        except funnel.FunnelError as error:
+            tunnel = None
+            print("Funnel did NOT start, so there is no public address:")
+            for line in str(error).split("\n"):
+                print(f"  {line}")
     print(f"Admin token: {ADMIN_TOKEN}")
     if GATE.enabled:
         print(f"Proxy passphrase: {GATE.passphrase}" + ("  (generated)" if GATE.generated else ""))
@@ -580,6 +638,11 @@ def main():
         print("\nStopping Quietweb.")
     finally:
         httpd.server_close()
+        if tunnel:
+            # A funnel outlives the process that started it, so leaving one up
+            # would point a public address at whatever takes the port next.
+            print("Closing the public address." if tunnel.stop() else
+                  "WARNING: could not close the funnel. Run: tailscale funnel --https=443 off")
     return 0
 
 

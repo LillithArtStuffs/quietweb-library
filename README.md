@@ -69,6 +69,32 @@ The same guard as the archiver applies: private and loopback addresses are refus
 
 **Traffic between your devices is not encrypted.** The server speaks plain HTTP, so on a shared network anything you browse through it is readable by others on that network. Use it on a network you trust.
 
+### Reaching it from somewhere else
+
+Three addresses, in increasing order of how much they expose.
+
+On the same Wi-Fi, `--host 0.0.0.0` prints a LAN address other devices can open. Nothing leaves the network.
+
+On [Tailscale](https://tailscale.com/download), the startup banner prints a `100.x` tailnet address that works from anywhere — but **only on devices signed into your tailnet**. That is the point of it: the address is not on the internet, and a machine you cannot install Tailscale on cannot use it.
+
+For a machine you do not control — a managed school laptop, a borrowed desktop — `--funnel` uses Tailscale Funnel to publish an ordinary `https://<name>.ts.net` address that any browser can open.
+
+```text
+--funnel   publish a public https://<name>.ts.net address with Tailscale Funnel
+```
+
+The funnel closes when the server stops, including when it is killed rather than interrupted. Funnel has to be enabled for your tailnet first; if it is not, the server relays Tailscale's own error, which names the setting, and keeps serving locally.
+
+**This one is genuinely public.** Anyone who finds the address reaches your login page, and ts.net names get scanned. So `--funnel` refuses to start unless the passphrase can survive that:
+
+- `--no-proxy-auth` is refused outright — that combination is an open proxy on the internet.
+- The passphrase must be at least 16 characters, and is generated at 24 if you do not supply one.
+- Anything used as an example in this project, or found written in the README or the launch scripts, is refused. If it is written down, it is not a secret.
+
+Wrong passphrases are also rate limited: eight wrong answers and that client waits a minute, which matters far more once the login is reachable from everywhere.
+
+Two things a tunnel does not fix. Traffic to a funnel address is HTTPS end to end, but a school network can still block `ts.net` by category the same way it blocks anything else, and a managed laptop's own monitoring sees what you browse regardless of how it reached your server.
+
 ### Keeping it running on a phone
 
 iOS suspends backgrounded apps, and a terminal app has no background mode that keeps a socket alive, so the server stops shortly after you leave a-Shell. Keeping it up means keeping a-Shell in the foreground with Auto-Lock set to Never, ideally on a charger; Guided Access stops a stray swipe ending it. If you want something reachable at a stable address without babysitting it, host it on a machine that stays on instead.
